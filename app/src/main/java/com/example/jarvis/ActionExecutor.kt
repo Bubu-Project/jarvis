@@ -13,8 +13,9 @@ class ActionExecutor(private val context: Context) {
         val pm = context.packageManager
         val apps = pm.getInstalledApplications(android.content.pm.PackageManager.GET_META_DATA)
 
+        val normalizedQuery = appName.lowercase().replace(" ", "")
         val match = apps.firstOrNull {
-            pm.getApplicationLabel(it).toString().lowercase().contains(appName.lowercase())
+            pm.getApplicationLabel(it).toString().lowercase().replace(" ", "").contains(normalizedQuery)
         } ?: return false
 
         val launchIntent = pm.getLaunchIntentForPackage(match.packageName) ?: return false
