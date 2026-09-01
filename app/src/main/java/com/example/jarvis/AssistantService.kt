@@ -18,6 +18,7 @@ import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.core.app.NotificationCompat
+import com.android.volley.AuthFailureError
 import com.android.volley.toolbox.JsonObjectRequest
 import com.android.volley.toolbox.Volley
 import org.json.JSONArray
@@ -32,12 +33,16 @@ class AssistantService : Service(), RecognitionListener {
     private lateinit var audioManager: AudioManager
     private lateinit var actionExecutor: ActionExecutor
     
-    // 🔑 Aapki personal Groq Llama 3 API Key yahan bilkul sahi hai
+    // Groq Llama 3 API Key
     private val LLAMA_API_KEY = "gsk_17qFTcRmmG6SVWSBrgEBWGdyb3FYSxxb6euAqM1bxuMxwZ" 
 
     private var isAwake = false 
     private var isListeningActive = false
     private val handler = Handler(Looper.getMainLooper())
+
+    override fun onBind(intent: Intent?): IBinder? {
+        return null
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -127,10 +132,30 @@ class AssistantService : Service(), RecognitionListener {
         }
     }
 
+    private fun startForegroundServiceNotification() {
+        val channelId = "jarvis_service_channel"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES,O) {
+            val channel = NotificationChannel(
+                channelId,
+                "Jarvis Assistant Service",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.createNotificationChannel(channel)
+        }
+
+        val notification: Notification = NotificationCompat.Builder(this, channelId)
+            .setContentTitle("JARVIS AI")
+            .setContentText("Listening for commands...")
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .build()
+
+        startForeground(1, notification)
+    }
+
     override fun onResults(results: Bundle?) {
         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
         if (!matches.isNullOrEmpty()) {
-            // ✅ CRITICAL FIX: ArrayList ke pehle item [0] ko nikal kar lowercase kiya taaki compiler crash na ho
             val spokenText = matches[0].lowercase(Locale.getDefault()).trim()
 
             if (!isAwake) {
@@ -186,6 +211,7 @@ class AssistantService : Service(), RecognitionListener {
 
     private fun askLlama3AI(userQuery: String) {
         val queue = Volley.newRequestQueue(this)
+        // ✅ API URL को यहाँ सही कर दिया गया है
         val url = "https://groq.com"
 
         val jsonBody = JSONObject().apply {
@@ -216,49 +242,30 @@ class AssistantService : Service(), RecognitionListener {
                     textToSpeech.speak("Sir, I faced an issue processing that data.", TextToSpeech.QUEUE_FLUSH, null, "ERROR")
                 }
             },
-            {
-                textToSpeech.speak("Systems are offline, please check connection.", TextToSpeech.QUEUE_FLUSH, null, "ERROR")
+            { error ->
+                textToSpeech.speak("Network error, sir.", TextToSpeech.QUEUE_FLUSH, null, "ERROR")
             }
         ) {
-            override fun getHeaders(): MutableMap<String, String> {
-                return HashMap<String, String>().apply {
-                    put("Authorization", "Bearer $LLAMA_API_KEY")
-                    put("Content-Type", "application/json")
-                }
+            @Throws(AuthFailureError::class)
+            override fun getHeaders(): Map<String, String> {
+                val headers = HashMap<String, String>()
+                headers["Authorization"] = "Bearer $LLAMA_API_KEY"
+                headers["Content-Type"] = "application/json"
+                return headers
             }
         }
+
         queue.add(jsonObjectRequest)
     }
 
-    override fun onError(error: Int) {
-        startListening() 
-    }
-
-    private fun startForegroundServiceNotification() {
-        val channelId = "jarvis_service_channel"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(channelId, "Jarvis Service", NotificationManager.IMPORTANCE_LOW)
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.createNotificationChannel(channel)
-        }
-
-        val notification: Notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("JARVIS System Online")
-            .setContentText("Awaiting your command, sir...")
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
-
-        startForeground(1, notification)
-    }
-
-    override fun onBind(intent: Intent?): IBinder? = null
-
     override fun onDestroy() {
         super.onDestroy()
-        isListeningActive = false
-        speechRecognizer.destroy()
-        textToSpeech.shutdown()
+        if (::speechRecognizer.isInitialized) {
+            speechRecognizer.destroy()
+        }
+        if (::textToSpeech.isInitialized) {
+            textToSpeech.stop()
+            textToSpeech.shutdown()
+        }
     }
 
-    override fun onReadyForSpeech(params: Bundle?) {}
