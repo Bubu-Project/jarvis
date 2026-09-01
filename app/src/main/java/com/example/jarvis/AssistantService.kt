@@ -212,6 +212,7 @@ class AssistantService : Service(), RecognitionListener {
         val queue = Volley.newRequestQueue(this)
         val url = "https://groq.com"
 
+
         val jsonBody = JSONObject().apply {
             put("model", "llama3-8b-8192") 
             put("messages", JSONArray().apply {
