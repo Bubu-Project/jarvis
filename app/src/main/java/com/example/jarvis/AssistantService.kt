@@ -33,7 +33,6 @@ class AssistantService : Service(), RecognitionListener {
     private lateinit var audioManager: AudioManager
     private lateinit var actionExecutor: ActionExecutor
     
-    // Groq Llama 3 API Key
     private val LLAMA_API_KEY = "gsk_17qFTcRmmG6SVWSBrgEBWGdyb3FYSxxb6euAqM1bxuMxwZ" 
 
     private var isAwake = false 
@@ -134,7 +133,8 @@ class AssistantService : Service(), RecognitionListener {
 
     private fun startForegroundServiceNotification() {
         val channelId = "jarvis_service_channel"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES,O) {
+        // ✅ यहाँ कॉमा (,) हटाकर डॉट (.) लगा दिया गया है ताकि कंपाइल एरर न आए
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 channelId,
                 "Jarvis Assistant Service",
@@ -211,7 +211,6 @@ class AssistantService : Service(), RecognitionListener {
 
     private fun askLlama3AI(userQuery: String) {
         val queue = Volley.newRequestQueue(this)
-        // ✅ API URL को यहाँ सही कर दिया गया है
         val url = "https://groq.com"
 
         val jsonBody = JSONObject().apply {
