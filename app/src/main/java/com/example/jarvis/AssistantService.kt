@@ -32,7 +32,7 @@ class AssistantService : Service(), RecognitionListener {
     private lateinit var audioManager: AudioManager
     private lateinit var actionExecutor: ActionExecutor
     
-    // 🔑 Aapki personal Groq Llama 3 API Key perfectly add kar di hai
+    // 🔑 Aapki personal Groq Llama 3 API Key yahan bilkul sahi hai
     private val LLAMA_API_KEY = "gsk_17qFTcRmmG6SVWSBrgEBWGdyb3FYSxxb6euAqM1bxuMxwZ" 
 
     private var isAwake = false 
@@ -130,7 +130,7 @@ class AssistantService : Service(), RecognitionListener {
     override fun onResults(results: Bundle?) {
         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
         if (!matches.isNullOrEmpty()) {
-            // ✅ EXACT FIX: ArrayList ke pehle element ([0]) ko string bana kar lowercase kiya
+            // ✅ CRITICAL FIX: ArrayList ke pehle item [0] ko nikal kar lowercase kiya taaki compiler crash na ho
             val spokenText = matches[0].lowercase(Locale.getDefault()).trim()
 
             if (!isAwake) {
