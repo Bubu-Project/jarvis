@@ -1,56 +1,78 @@
 package com.example.jarvis
 
-import okhttp3.Call
-import okhttp3.Callback
+import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 
-object ClaudeClient {
+class ClaudeClient {
 
-    private const val API_URL = "https://api.anthropic.com/v1/messages"
     private val client = OkHttpClient()
+    private val apiKey = "YOUR_CLAUDE_API_KEY_HERE"
 
-    fun ask(userText: String, onReply: (String) -> Unit) {
-        val apiKey = BuildConfig.ANTHROPIC_API_KEY
-        if (apiKey.isBlank()) {
-            onReply("I don't have an API key set up yet.")
-            return
+    interface ClaudeCallback {
+        fun onSuccess(response: String)
+        fun onFailure(error: String)
+    }
+
+    fun askClaude(userQuery: String, callback: ClaudeCallback) {
+        val url = "https://anthropic.com"
+
+        val jsonBody = JSONObject().apply {
+            put("model", "claude-3-5-sonnet-20241022")
+            put("max_tokens", 1024)
+            put("system", "You are JARVIS from Iron Man. You are a loyal, witty, and extremely intelligent AI friend. Talk like a real supportive buddy, keep answers brief, futuristic, and helpful.")
+            put("messages", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("role", "user")
+                    put("content", userQuery)
+                })
+            })
         }
 
-        val messages = JSONArray().put(
-            JSONObject().put("role", "user").put("content", userText)
-        )
-
-        val body = JSONObject().apply {
-            put("model", "claude-sonnet-4-6")
-            put("max_tokens", 300)
-            put("system", "You are Jarvis, a concise voice assistant. Keep replies short since they'll be spoken aloud.")
-            put("messages", messages)
-        }
+        val mediaType = "application/json".toMediaType()
+        val body = jsonBody.toString().toRequestBody(mediaType)
 
         val request = Request.Builder()
-            .url(API_URL)
+            .url(url)
             .addHeader("x-api-key", apiKey)
             .addHeader("anthropic-version", "2023-06-01")
             .addHeader("content-type", "application/json")
-            .post(body.toString().toRequestBody("application/json".toMediaType()))
+            .post(body)
             .build()
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                onReply("Sorry, I couldn't reach the server.")
+                callback.onFailure(e.message ?: "Unknown error")
             }
 
-            override fun onResponse(call: Call, response: okhttp3.Response) {
-                val json = JSONObject(response.body?.string() ?: "{}")
-                val content = json.optJSONArray("content")
-                val text = content?.optJSONObject(0)?.optString("text") ?: "Sorry, I didn't get a reply."
-                onReply(text)
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    if (!response.isSuccessful) {
+                        callback.onFailure("Unexpected code $response")
+                        return
+                    }
+
+                    val responseData = response.body?.string()
+                    if (responseData != null) {
+                        try {
+                            val jsonResponse = JSONObject(responseData)
+                            val contentArray = jsonResponse.getJSONArray("content")
+                            if (contentArray.length() > 0) {
+                                val textResponse = contentArray.getJSONObject(0).getString("text")
+                                callback.onSuccess(textResponse)
+                            } else {
+                                callback.onFailure("Empty content from Claude")
+                            }
+                        } catch (e: Exception) {
+                            callback.onFailure(e.message ?: "JSON parsing error")
+                        }
+                    } else {
+                        callback.onFailure("Null response body")
+                    }
+                }
             }
         })
     }
