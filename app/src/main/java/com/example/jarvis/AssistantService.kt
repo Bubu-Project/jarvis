@@ -155,7 +155,7 @@ class AssistantService : Service(), RecognitionListener {
     override fun onResults(results: Bundle?) {
         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
         if (!matches.isNullOrEmpty()) {
-            val spokenText = matches[0].lowercase(Locale.getDefault()).trim()
+            val spokenText = matches[0].lowercase(Locale.US).trim()
 
             if (!isAwake) {
                 if (spokenText.contains("jarvis")) {
@@ -269,4 +269,3 @@ class AssistantService : Service(), RecognitionListener {
 
     override fun onReadyForSpeech(params: Bundle?) {}
     override fun onBeginningOfSpeech() {}
-    
