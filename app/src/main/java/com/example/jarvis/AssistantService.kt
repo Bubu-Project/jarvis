@@ -32,8 +32,8 @@ class AssistantService : Service(), RecognitionListener {
     private lateinit var audioManager: AudioManager
     private lateinit var actionExecutor: ActionExecutor
     
-    // 🔑 Aapki Free Groq Llama 3 API Key yahan set kar di hai
-    private val LLAMA_API_KEY = "gsk_17qFTcRmmG6SVWSBrgEBWGdyb3FYSxxb6euAqM1bxuMxwZ..." 
+    // 🔑 Aapki personal Groq Llama 3 API Key perfectly add kar di hai
+    private val LLAMA_API_KEY = "gsk_17qFTcRmmG6SVWSBrgEBWGdyb3FYSxxb6euAqM1bxuMxwZ" 
 
     private var isAwake = false 
     private var isListeningActive = false
@@ -45,7 +45,6 @@ class AssistantService : Service(), RecognitionListener {
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         actionExecutor = ActionExecutor(this) 
 
-        // Text to Speech Setup + Listener taaki Jarvis "Yes Sir" bolne ke TURANT BAAD bina atke mic on kare
         textToSpeech = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 textToSpeech.language = Locale.US
@@ -75,12 +74,10 @@ class AssistantService : Service(), RecognitionListener {
     private fun setupTTSListener() {
         textToSpeech.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
-                // Jab Jarvis bol raha ho, mic temporary stop karo taaki apni awaaz na sune
                 handler.post { speechRecognizer.stopListening() }
             }
 
             override fun onDone(utteranceId: String?) {
-                // Movie Style Fast Response: Jaise hi "Yes Sir" khatam ho, PALAK JHAPAKTE HI mic active ho jaye
                 handler.post { startListening() }
             }
 
@@ -94,12 +91,10 @@ class AssistantService : Service(), RecognitionListener {
         audioManager.requestAudioFocus(
             { focusChange ->
                 when (focusChange) {
-                    // YouTube chalte hi background mic ruk jayega taaki videos lag na karein
                     AudioManager.AUDIOFOCUS_LOSS, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
                         isListeningActive = false
                         speechRecognizer.stopListening()
                     }
-                    // YouTube band hote hi wapas listening shuru
                     AudioManager.AUDIOFOCUS_GAIN -> {
                         isListeningActive = true
                         startListening()
@@ -135,19 +130,19 @@ class AssistantService : Service(), RecognitionListener {
     override fun onResults(results: Bundle?) {
         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
         if (!matches.isNullOrEmpty()) {
+            // ✅ EXACT FIX: ArrayList ke pehle element ([0]) ko string bana kar lowercase kiya
             val spokenText = matches[0].lowercase(Locale.getDefault()).trim()
 
             if (!isAwake) {
                 if (spokenText.contains("jarvis")) {
                     isAwake = true
-                    // "Yes Sir" bolega Jarvis aur uske baad turant command ke liye ready ho jayega
                     textToSpeech.speak("Yes Sir", TextToSpeech.QUEUE_FLUSH, null, "WAKE_UP")
                 } else {
                     startListening()
                 }
             } else {
                 executeVoiceCommand(spokenText)
-                isAwake = false // Command lene ke baad wapas sleep mode (wake word wait)
+                isAwake = false 
             }
         } else {
             startListening()
@@ -183,7 +178,6 @@ class AssistantService : Service(), RecognitionListener {
                 actionExecutor.playOnYoutube(query)
                 textToSpeech.speak("Playing on YouTube, sir.", TextToSpeech.QUEUE_FLUSH, null, "ACTION")
             }
-            // 🤖 INSTANT LLAMA 3 RESPONSE: Agar koi system command nahi mila, toh AI se instant jawab lao
             else -> {
                 askLlama3AI(command)
             }
@@ -237,7 +231,7 @@ class AssistantService : Service(), RecognitionListener {
     }
 
     override fun onError(error: Int) {
-        startListening() // Mic timeout par bina freeze hue loop restart karega
+        startListening() 
     }
 
     private fun startForegroundServiceNotification() {
@@ -248,3 +242,23 @@ class AssistantService : Service(), RecognitionListener {
             manager.createNotificationChannel(channel)
         }
 
+        val notification: Notification = NotificationCompat.Builder(this, channelId)
+            .setContentTitle("JARVIS System Online")
+            .setContentText("Awaiting your command, sir...")
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+
+        startForeground(1, notification)
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+        super.onDestroy()
+        isListeningActive = false
+        speechRecognizer.destroy()
+        textToSpeech.shutdown()
+    }
+
+    override fun onReadyForSpeech(params: Bundle?) {}
