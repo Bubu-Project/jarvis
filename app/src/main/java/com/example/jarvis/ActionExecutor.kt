@@ -2,8 +2,10 @@ package com.example.jarvis
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.hardware.camera2.CameraManager
 import android.net.Uri
+import android.os.Build
 import android.provider.ContactsContract
 import android.telephony.SmsManager
 
@@ -11,7 +13,8 @@ class ActionExecutor(private val context: Context) {
 
     fun openApp(appName: String): Boolean {
         val pm = context.packageManager
-        val apps = pm.getInstalledApplications(android.content.pm.PackageManager.GET_META_DATA)
+        // ✅ यहाँ PackageManager फ्लैग को सेफ तरीके से डिक्लेअर कर दिया गया है
+        val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
 
         val normalizedQuery = appName.lowercase().replace(" ", "")
         val match = apps.firstOrNull {
@@ -36,9 +39,20 @@ class ActionExecutor(private val context: Context) {
 
     fun sendSms(name: String, message: String): Boolean {
         val phoneNumber = lookupContactNumber(name) ?: return false
-        val smsManager = context.getSystemService(SmsManager::class.java)
-        smsManager.sendTextMessage(phoneNumber, null, message, null, null)
-        return true
+        try {
+            // ✅ SmsManager को नए और पुराने दोनों एंड्रॉयड वर्शन्स के लिए सेफ बना दिया गया है
+            val smsManager: SmsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                context.getSystemService(SmsManager::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                SmsManager.getDefault()
+            }
+            smsManager.sendTextMessage(phoneNumber, null, message, null, null)
+            return true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return false
+        }
     }
 
     fun playOnYoutube(query: String) {
@@ -56,9 +70,13 @@ class ActionExecutor(private val context: Context) {
     }
 
     fun toggleFlashlight(on: Boolean) {
-        val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        val cameraId = cameraManager.cameraIdList.firstOrNull() ?: return
-        cameraManager.setTorchMode(cameraId, on)
+        try {
+            val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            val cameraId = cameraManager.cameraIdList.firstOrNull() ?: return
+            cameraManager.setTorchMode(cameraId, on)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun lookupContactNumber(name: String): String? {
