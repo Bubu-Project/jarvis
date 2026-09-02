@@ -212,13 +212,12 @@ class AssistantService : Service(), RecognitionListener {
         val queue = Volley.newRequestQueue(this)
         val url = "https://groq.com"
 
-
         val jsonBody = JSONObject().apply {
             put("model", "llama3-8b-8192") 
             put("messages", JSONArray().apply {
                 put(JSONObject().apply {
                     put("role", "system")
-                    put("content", "You are JARVIS from Iron Man. Loyal, witty, and extremely intelligent. Keep answers very brief, crisp, and futuristic.")
+                    put("content", "You are JARVIS from Iron Man. Loyal, witty, and extremely intelligent AI friend. Talk like a real supportive buddy, keep answers crisp, brief, and futuristic.")
                 })
                 put(JSONObject().apply {
                     put("role", "user")
@@ -255,7 +254,7 @@ class AssistantService : Service(), RecognitionListener {
         }
 
         queue.add(jsonObjectRequest)
-    
+    }
 
     override fun onDestroy() {
         super.onDestroy()
@@ -269,4 +268,3 @@ class AssistantService : Service(), RecognitionListener {
     }
 
     override fun onReadyForSpeech(params: Bundle?) {}
-    override fun onBeginningOfSpeech() {}
