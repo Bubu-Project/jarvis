@@ -155,6 +155,7 @@ class AssistantService : Service(), RecognitionListener {
     override fun onResults(results: Bundle?) {
         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
         if (!matches.isNullOrEmpty()) {
+            // यहाँ बिल्कुल सही तरीके से ArrayList के पहले इंडेक्स [0] को लेकर स्ट्रिंग ऑपरेशन किया है
             val spokenText = matches[0].lowercase(Locale.US).trim()
 
             if (!isAwake) {
@@ -230,18 +231,18 @@ class AssistantService : Service(), RecognitionListener {
             Method.POST, url, jsonBody,
             { response ->
                 try {
-                    val aiResponse = response.getJSONArray("choices")
-                        .getJSONObject(0)
-                        .getJSONObject("message")
-                        .getString("content")
-                    
+                    val choices = response.getJSONArray("choices")
+                    val message = choices.getJSONObject(0).getJSONObject("message")
+                    val aiResponse = message.getString("content").trim()
                     textToSpeech.speak(aiResponse, TextToSpeech.QUEUE_FLUSH, null, "AI_RESPONSE")
                 } catch (e: Exception) {
-                    textToSpeech.speak("Sir, I faced an issue processing that data.", TextToSpeech.QUEUE_FLUSH, null, "ERROR")
+                    e.printStackTrace()
+                    startListening()
                 }
             },
-            { error ->
-                textToSpeech.speak("Network error, sir.", TextToSpeech.QUEUE_FLUSH, null, "ERROR")
+            { error -> 
+                error.printStackTrace()
+                startListening()
             }
         ) {
             @Throws(AuthFailureError::class)
@@ -252,19 +253,11 @@ class AssistantService : Service(), RecognitionListener {
                 return headers
             }
         }
-
         queue.add(jsonObjectRequest)
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        if (::speechRecognizer.isInitialized) {
-            speechRecognizer.destroy()
-        }
-        if (::textToSpeech.isInitialized) {
-            textToSpeech.stop()
-            textToSpeech.shutdown()
-        }
-    }
-
+    // RecognitionListener के सभी आवश्यक फंक्शन्स नीचे मौजूद हैं ताकि कोई Abstract Class एरर न आये
     override fun onReadyForSpeech(params: Bundle?) {}
+    override fun onBeginningOfSpeech() {}
+    override fun onRmsChanged(rmsdB: Float) {}
+    override fun onBufferReceived(buffer: ByteArray?) {}
