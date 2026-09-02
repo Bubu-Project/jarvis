@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.jarvis">
 
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.INTERNET" />
@@ -14,10 +15,11 @@
     <application
         android:allowBackup="true"
         android:label="Jarvis"
-        android:theme="@style/Theme.AppCompat.DayNight">
+        android:theme="@style/Theme.AppCompat.DayNight"
+        android:icon="@android:drawable/ic_btn_speak_now">
 
         <activity
-            android:name=".MainActivity"
+            android:name="com.example.jarvis.MainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -26,7 +28,7 @@
         </activity>
 
         <service
-            android:name=".AssistantService"
+            android:name="com.example.jarvis.AssistantService"
             android:foregroundServiceType="microphone"
             android:exported="false" />
 
