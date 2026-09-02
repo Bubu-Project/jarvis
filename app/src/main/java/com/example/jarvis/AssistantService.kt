@@ -255,7 +255,7 @@ class AssistantService : Service(), RecognitionListener {
         }
 
         queue.add(jsonObjectRequest)
-    }
+    
 
     override fun onDestroy() {
         super.onDestroy()
