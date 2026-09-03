@@ -36,36 +36,34 @@ class AssistantService : Service(), RecognitionListener {
     private lateinit var actionExecutor: ActionExecutor
     private lateinit var requestQueue: RequestQueue
 
-    // =========================================================
+    // =====================================================
     // GROQ API KEY
-    // YAHAN APNI EXISTING GROQ API KEY PASTE KARO
-    // =========================================================
-    private val LLAMA_API_KEY = "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"
+    // SIRF ISI JAGAH APNI EXISTING GROQ KEY PASTE KARO
+    // =====================================================
+    private val LLAMA_API_KEY = "PASTE_YOUR_EXISTING_GROQ_KEY_HERE"
 
     private val handler = Handler(Looper.getMainLooper())
 
-    private var isAwake = false
     private var isListeningActive = false
     private var isRecognizerListening = false
     private var isSpeaking = false
+    private var isAwake = false
     private var ttsReady = false
 
-    // Prevents partial + final result from triggering twice
-    private var wakeDetectedThisSession = false
+    private var wakeHandled = false
+    private var recognizerRestartPending = false
 
-    private val wakeTimeoutRunnable = Runnable {
-        if (isAwake) {
-            isAwake = false
-            wakeDetectedThisSession = false
-            startListening()
-        }
+    private val wakeTimeout = Runnable {
+        isAwake = false
+        wakeHandled = false
+        startListening()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // =========================================================
-    // SERVICE START
-    // =========================================================
+    // =====================================================
+    // CREATE SERVICE
+    // =====================================================
 
     override fun onCreate() {
         super.onCreate()
@@ -77,9 +75,9 @@ class AssistantService : Service(), RecognitionListener {
 
         requestQueue = Volley.newRequestQueue(this)
 
-        startForegroundServiceNotification()
+        createNotification()
 
-        setupTextToSpeech()
+        setupTTS()
 
         setupRecognizer()
 
@@ -87,27 +85,32 @@ class AssistantService : Service(), RecognitionListener {
 
         isListeningActive = true
 
-        handler.postDelayed({
-            startListening()
-        }, 1000)
+        handler.postDelayed(
+            {
+                startListening()
+            },
+            1000
+        )
     }
 
-    // =========================================================
-    // TEXT TO SPEECH
-    // =========================================================
+    // =====================================================
+    // TTS
+    // =====================================================
 
-    private fun setupTextToSpeech() {
+    private fun setupTTS() {
 
         textToSpeech = TextToSpeech(this) { status ->
 
             if (status == TextToSpeech.SUCCESS) {
 
-                val result =
+                val languageResult =
                     textToSpeech.setLanguage(Locale.US)
 
                 ttsReady =
-                    result != TextToSpeech.LANG_MISSING_DATA &&
-                    result != TextToSpeech.LANG_NOT_SUPPORTED
+                    languageResult != TextToSpeech.LANG_MISSING_DATA &&
+                    languageResult != TextToSpeech.LANG_NOT_SUPPORTED
+
+                textToSpeech.setSpeechRate(1.0f)
 
                 setupTTSListener()
             }
@@ -120,23 +123,25 @@ class AssistantService : Service(), RecognitionListener {
 
             object : UtteranceProgressListener() {
 
-                override fun onStart(utteranceId: String?) {
+                override fun onStart(
+                    utteranceId: String?
+                ) {
 
                     handler.post {
 
                         isSpeaking = true
 
                         try {
-                            if (isRecognizerListening) {
-                                speechRecognizer.stopListening()
-                            }
+                            speechRecognizer.stopListening()
                         } catch (_: Exception) {}
 
                         isRecognizerListening = false
                     }
                 }
 
-                override fun onDone(utteranceId: String?) {
+                override fun onDone(
+                    utteranceId: String?
+                ) {
 
                     handler.post {
 
@@ -148,13 +153,15 @@ class AssistantService : Service(), RecognitionListener {
                                 {
                                     startListening()
                                 },
-                                300
+                                350
                             )
                         }
                     }
                 }
 
-                override fun onError(utteranceId: String?) {
+                override fun onError(
+                    utteranceId: String?
+                ) {
 
                     handler.post {
 
@@ -166,7 +173,7 @@ class AssistantService : Service(), RecognitionListener {
                                 {
                                     startListening()
                                 },
-                                300
+                                350
                             )
                         }
                     }
@@ -177,18 +184,10 @@ class AssistantService : Service(), RecognitionListener {
 
     private fun speak(
         text: String,
-        utteranceId: String
+        id: String
     ) {
 
         if (!ttsReady) {
-
-            handler.postDelayed(
-                {
-                    startListening()
-                },
-                500
-            )
-
             return
         }
 
@@ -197,9 +196,7 @@ class AssistantService : Service(), RecognitionListener {
             isSpeaking = true
 
             try {
-                if (isRecognizerListening) {
-                    speechRecognizer.stopListening()
-                }
+                speechRecognizer.stopListening()
             } catch (_: Exception) {}
 
             isRecognizerListening = false
@@ -208,14 +205,14 @@ class AssistantService : Service(), RecognitionListener {
                 text,
                 TextToSpeech.QUEUE_FLUSH,
                 null,
-                utteranceId
+                id
             )
         }
     }
 
-    // =========================================================
+    // =====================================================
     // SPEECH RECOGNIZER
-    // =========================================================
+    // =====================================================
 
     private fun setupRecognizer() {
 
@@ -238,7 +235,6 @@ class AssistantService : Service(), RecognitionListener {
                     RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
                 )
 
-                // Indian English / Hinglish
                 putExtra(
                     RecognizerIntent.EXTRA_LANGUAGE,
                     "en-IN"
@@ -251,7 +247,7 @@ class AssistantService : Service(), RecognitionListener {
 
                 putExtra(
                     RecognizerIntent.EXTRA_MAX_RESULTS,
-                    3
+                    5
                 )
 
                 putExtra(
@@ -259,7 +255,11 @@ class AssistantService : Service(), RecognitionListener {
                     true
                 )
 
-                // Faster speech finalization
+                putExtra(
+                    RecognizerIntent.EXTRA_CALLING_PACKAGE,
+                    packageName
+                )
+
                 putExtra(
                     RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS,
                     500L
@@ -267,24 +267,19 @@ class AssistantService : Service(), RecognitionListener {
 
                 putExtra(
                     RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
-                    900L
+                    1500L
                 )
 
                 putExtra(
                     RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
-                    1200L
-                )
-
-                putExtra(
-                    RecognizerIntent.EXTRA_CALLING_PACKAGE,
-                    packageName
+                    2000L
                 )
             }
     }
 
-    // =========================================================
+    // =====================================================
     // START LISTENING
-    // =========================================================
+    // =====================================================
 
     private fun startListening() {
 
@@ -304,7 +299,7 @@ class AssistantService : Service(), RecognitionListener {
 
             try {
 
-                wakeDetectedThisSession = false
+                wakeHandled = false
 
                 isRecognizerListening = true
 
@@ -321,15 +316,21 @@ class AssistantService : Service(), RecognitionListener {
         }
     }
 
-    // =========================================================
-    // RESTART RECOGNIZER
-    // =========================================================
+    // =====================================================
+    // RESTART SPEECH RECOGNIZER
+    // =====================================================
 
     private fun restartRecognizer() {
 
         if (!isListeningActive) return
 
+        if (recognizerRestartPending) return
+
+        recognizerRestartPending = true
+
         handler.postDelayed({
+
+            recognizerRestartPending = false
 
             if (!isListeningActive) return@postDelayed
 
@@ -361,30 +362,32 @@ class AssistantService : Service(), RecognitionListener {
                 )
             }
 
-        }, 700)
+        }, 800)
     }
 
-    // =========================================================
+    // =====================================================
     // WAKE WORD
-    // =========================================================
+    // =====================================================
 
     private fun containsWakeWord(
         text: String
     ): Boolean {
 
-        val normalized =
+        val value =
             text
                 .lowercase(Locale.US)
                 .replace("-", " ")
                 .replace(".", " ")
                 .replace(",", " ")
+                .replace("?", " ")
+                .replace("!", " ")
                 .trim()
 
-        return normalized.contains("jarvis") ||
-                normalized.contains("jar vis") ||
-                normalized.contains("jervis") ||
-                normalized.contains("jarvish") ||
-                normalized.contains("jarvice")
+        return value.contains("jarvis") ||
+                value.contains("jar vis") ||
+                value.contains("jervis") ||
+                value.contains("jarvish") ||
+                value.contains("jarvice")
     }
 
     private fun removeWakeWord(
@@ -397,17 +400,17 @@ class AssistantService : Service(), RecognitionListener {
             .replace("ok jarvis", "")
             .replace("okay jarvis", "")
             .replace("jarvis assistant", "")
-            .replace("jarvis", "")
             .replace("jar vis", "")
             .replace("jervis", "")
             .replace("jarvish", "")
             .replace("jarvice", "")
+            .replace("jarvis", "")
             .trim()
     }
 
-    // =========================================================
-    // FINAL SPEECH RESULT
-    // =========================================================
+    // =====================================================
+    // FINAL RESULT
+    // =====================================================
 
     override fun onResults(
         results: Bundle?
@@ -415,11 +418,15 @@ class AssistantService : Service(), RecognitionListener {
 
         isRecognizerListening = false
 
-        if (wakeDetectedThisSession) {
+        if (wakeHandled) {
 
-            wakeDetectedThisSession = false
+            wakeHandled = false
 
-            if (isListeningActive && !isSpeaking) {
+            if (
+                isListeningActive &&
+                !isSpeaking
+            ) {
+
                 handler.postDelayed(
                     {
                         startListening()
@@ -431,30 +438,28 @@ class AssistantService : Service(), RecognitionListener {
             return
         }
 
-        val matches =
+        val resultsList =
             results?.getStringArrayList(
                 SpeechRecognizer.RESULTS_RECOGNITION
             )
 
-        if (matches.isNullOrEmpty()) {
+        if (resultsList.isNullOrEmpty()) {
 
-            if (isListeningActive && !isSpeaking) {
-
-                handler.postDelayed(
-                    {
-                        startListening()
-                    },
-                    300
-                )
-            }
+            handler.postDelayed(
+                {
+                    startListening()
+                },
+                300
+            )
 
             return
         }
 
         val spokenText =
-            matches[0]
-                .lowercase(Locale.US)
-                .trim()
+            resultsList.firstOrNull()
+                ?.lowercase(Locale.US)
+                ?.trim()
+                ?: ""
 
         if (spokenText.isBlank()) {
 
@@ -463,12 +468,14 @@ class AssistantService : Service(), RecognitionListener {
             return
         }
 
-        handleSpokenText(spokenText)
+        handleSpeech(
+            spokenText
+        )
     }
 
-    // =========================================================
-    // PARTIAL SPEECH RESULT
-    // =========================================================
+    // =====================================================
+    // PARTIAL RESULT
+    // =====================================================
 
     override fun onPartialResults(
         partialResults: Bundle?
@@ -480,26 +487,26 @@ class AssistantService : Service(), RecognitionListener {
 
         if (isAwake) return
 
-        if (wakeDetectedThisSession) return
+        if (wakeHandled) return
 
-        val matches =
+        val resultsList =
             partialResults?.getStringArrayList(
                 SpeechRecognizer.RESULTS_RECOGNITION
             )
 
-        if (matches.isNullOrEmpty()) return
+        if (resultsList.isNullOrEmpty()) return
 
         val spokenText =
-            matches[0]
-                .lowercase(Locale.US)
-                .trim()
+            resultsList.firstOrNull()
+                ?.lowercase(Locale.US)
+                ?.trim()
+                ?: ""
 
         if (!containsWakeWord(spokenText)) {
             return
         }
 
-        // Wake word detected immediately
-        wakeDetectedThisSession = true
+        wakeHandled = true
 
         isRecognizerListening = false
 
@@ -507,20 +514,22 @@ class AssistantService : Service(), RecognitionListener {
             speechRecognizer.stopListening()
         } catch (_: Exception) {}
 
-        handler.removeCallbacks(
-            wakeTimeoutRunnable
-        )
-
         val command =
-            removeWakeWord(spokenText)
+            removeWakeWord(
+                spokenText
+            )
 
         if (command.isBlank()) {
 
             isAwake = true
 
+            handler.removeCallbacks(
+                wakeTimeout
+            )
+
             handler.postDelayed(
-                wakeTimeoutRunnable,
-                7000
+                wakeTimeout,
+                8000
             )
 
             speak(
@@ -532,49 +541,51 @@ class AssistantService : Service(), RecognitionListener {
 
             isAwake = false
 
-            executeVoiceCommand(command)
+            executeVoiceCommand(
+                command
+            )
         }
     }
 
-    // =========================================================
-    // HANDLE SPOKEN TEXT
-    // =========================================================
+    // =====================================================
+    // SPEECH HANDLER
+    // =====================================================
 
-    private fun handleSpokenText(
-        spokenText: String
+    private fun handleSpeech(
+        text: String
     ) {
 
         if (isAwake) {
 
-            handler.removeCallbacks(
-                wakeTimeoutRunnable
-            )
-
             isAwake = false
 
+            handler.removeCallbacks(
+                wakeTimeout
+            )
+
             executeVoiceCommand(
-                spokenText
+                text
             )
 
             return
         }
 
-        if (containsWakeWord(spokenText)) {
+        if (containsWakeWord(text)) {
 
             val command =
-                removeWakeWord(spokenText)
+                removeWakeWord(text)
 
             if (command.isBlank()) {
 
                 isAwake = true
 
                 handler.removeCallbacks(
-                    wakeTimeoutRunnable
+                    wakeTimeout
                 )
 
                 handler.postDelayed(
-                    wakeTimeoutRunnable,
-                    7000
+                    wakeTimeout,
+                    8000
                 )
 
                 speak(
@@ -583,8 +594,6 @@ class AssistantService : Service(), RecognitionListener {
                 )
 
             } else {
-
-                isAwake = false
 
                 executeVoiceCommand(
                     command
@@ -597,40 +606,26 @@ class AssistantService : Service(), RecognitionListener {
         }
     }
 
-    // =========================================================
-    // VOICE COMMANDS
-    // =========================================================
+    // =====================================================
+    // COMMAND EXECUTOR
+    // =====================================================
 
     private fun executeVoiceCommand(
         command: String
     ) {
 
-        val cleanCommand =
+        val cmd =
             command
                 .lowercase(Locale.US)
                 .trim()
 
         when {
 
-            // -------------------------------------------------
             // FLASHLIGHT ON
-            // -------------------------------------------------
-
-            cleanCommand.contains(
-                "turn on flashlight"
-            ) ||
-
-            cleanCommand.contains(
-                "turn flashlight on"
-            ) ||
-
-            cleanCommand.contains(
-                "flashlight on"
-            ) ||
-
-            cleanCommand.contains(
-                "torch on"
-            ) -> {
+            cmd.contains("flashlight on") ||
+            cmd.contains("torch on") ||
+            cmd.contains("turn on flashlight") ||
+            cmd.contains("turn flashlight on") -> {
 
                 actionExecutor.toggleFlashlight(
                     true
@@ -638,29 +633,15 @@ class AssistantService : Service(), RecognitionListener {
 
                 speak(
                     "Flashlight turned on, Sir.",
-                    "FLASHLIGHT_ON"
+                    "FLASH_ON"
                 )
             }
 
-            // -------------------------------------------------
             // FLASHLIGHT OFF
-            // -------------------------------------------------
-
-            cleanCommand.contains(
-                "turn off flashlight"
-            ) ||
-
-            cleanCommand.contains(
-                "turn flashlight off"
-            ) ||
-
-            cleanCommand.contains(
-                "flashlight off"
-            ) ||
-
-            cleanCommand.contains(
-                "torch off"
-            ) -> {
+            cmd.contains("flashlight off") ||
+            cmd.contains("torch off") ||
+            cmd.contains("turn off flashlight") ||
+            cmd.contains("turn flashlight off") -> {
 
                 actionExecutor.toggleFlashlight(
                     false
@@ -668,20 +649,15 @@ class AssistantService : Service(), RecognitionListener {
 
                 speak(
                     "Flashlight turned off, Sir.",
-                    "FLASHLIGHT_OFF"
+                    "FLASH_OFF"
                 )
             }
 
-            // -------------------------------------------------
             // OPEN APP
-            // -------------------------------------------------
-
-            cleanCommand.startsWith(
-                "open "
-            ) -> {
+            cmd.startsWith("open ") -> {
 
                 val appName =
-                    cleanCommand
+                    cmd
                         .removePrefix("open ")
                         .trim()
 
@@ -701,21 +677,16 @@ class AssistantService : Service(), RecognitionListener {
 
                     speak(
                         "I could not find that app, Sir.",
-                        "APP_NOT_FOUND"
+                        "APP_ERROR"
                     )
                 }
             }
 
-            // -------------------------------------------------
-            // CALL CONTACT
-            // -------------------------------------------------
-
-            cleanCommand.startsWith(
-                "call "
-            ) -> {
+            // CALL
+            cmd.startsWith("call ") -> {
 
                 val contactName =
-                    cleanCommand
+                    cmd
                         .removePrefix("call ")
                         .trim()
 
@@ -725,19 +696,16 @@ class AssistantService : Service(), RecognitionListener {
 
                 speak(
                     "Calling $contactName, Sir.",
-                    "CALL_CONTACT"
+                    "CALL"
                 )
             }
 
-            // -------------------------------------------------
             // YOUTUBE
-            // -------------------------------------------------
-
-            cleanCommand.contains("play") &&
-            cleanCommand.contains("youtube") -> {
+            cmd.contains("youtube") &&
+            cmd.contains("play") -> {
 
                 val query =
-                    cleanCommand
+                    cmd
                         .replace("play", "")
                         .replace("on youtube", "")
                         .replace("youtube", "")
@@ -763,77 +731,48 @@ class AssistantService : Service(), RecognitionListener {
                 }
             }
 
-            // -------------------------------------------------
-            // WORK / JOB MODE
-            // -------------------------------------------------
+            // WORK MODE
+            cmd.startsWith("job ") ||
+            cmd.contains("find me a job") ||
+            cmd.contains("job search") ||
+            cmd.contains("career") ||
+            cmd.contains("resume") ||
+            cmd.contains("interview") ||
+            cmd.contains("job preparation") -> {
 
-            cleanCommand.startsWith("job ") ||
-
-            cleanCommand.contains(
-                "find me a job"
-            ) ||
-
-            cleanCommand.contains(
-                "job search"
-            ) ||
-
-            cleanCommand.contains(
-                "career"
-            ) ||
-
-            cleanCommand.contains(
-                "resume"
-            ) ||
-
-            cleanCommand.contains(
-                "interview"
-            ) ||
-
-            cleanCommand.contains(
-                "job preparation"
-            ) -> {
-
-                askLlama3AI(
+                askAI(
                     """
                     The user is using JARVIS Work Mode.
 
-                    Help with:
-                    - Jobs
-                    - Remote jobs
-                    - Career planning
-                    - Resume improvement
-                    - Interview preparation
-                    - Coding preparation
-                    - AI/ML learning
-                    - Project planning
-                    - Professional development
+                    Help with jobs, remote jobs,
+                    career planning, resume,
+                    interview preparation,
+                    coding preparation,
+                    AI/ML learning,
+                    project planning and
+                    professional development.
 
                     Give practical and actionable advice.
 
                     User request:
-                    $cleanCommand
+                    $cmd
                     """.trimIndent()
                 )
             }
 
-            // -------------------------------------------------
             // NORMAL AI
-            // -------------------------------------------------
-
             else -> {
 
-                askLlama3AI(
-                    cleanCommand
-                )
+                askAI(cmd)
             }
         }
     }
 
-    // =========================================================
+    // =====================================================
     // GROQ AI
-    // =========================================================
+    // =====================================================
 
-    private fun askLlama3AI(
+    private fun askAI(
         userQuery: String
     ) {
 
@@ -843,8 +782,8 @@ class AssistantService : Service(), RecognitionListener {
         ) {
 
             speak(
-                "Sir, my AI key has not been configured yet.",
-                "NO_API_KEY"
+                "Sir, my AI key is not configured.",
+                "NO_KEY"
             )
 
             return
@@ -853,7 +792,7 @@ class AssistantService : Service(), RecognitionListener {
         val url =
             "https://api.groq.com/openai/v1/chat/completions"
 
-        val jsonBody =
+        val body =
             JSONObject().apply {
 
                 put(
@@ -889,41 +828,28 @@ class AssistantService : Service(), RecognitionListener {
                                     You are JARVIS, a futuristic personal AI assistant.
 
                                     Personality:
-                                    - Intelligent
-                                    - Calm
-                                    - Loyal
-                                    - Helpful
-                                    - Slightly witty
-                                    - Professional but friendly
+                                    Intelligent, calm, loyal,
+                                    helpful, slightly witty,
+                                    professional and friendly.
 
                                     Address the user as Sir when appropriate.
 
-                                    The user is building JARVIS as a real
-                                    Android AI assistant.
+                                    Help with programming, AI,
+                                    machine learning, robotics,
+                                    electronics, Android development,
+                                    career, jobs, resume,
+                                    interviews and learning.
 
-                                    Help with:
-                                    - Programming
-                                    - AI
-                                    - Machine Learning
-                                    - Robotics
-                                    - Electronics
-                                    - Android development
-                                    - Career
-                                    - Jobs
-                                    - Resume
-                                    - Interviews
-                                    - Learning
-                                    - Projects
-
-                                    You are also the user's Work Assistant.
+                                    You are also the user's
+                                    Work Assistant.
 
                                     Give practical answers.
 
-                                    Keep spoken responses concise,
-                                    natural and easy to understand.
+                                    Keep responses concise and
+                                    natural because responses
+                                    are spoken aloud.
 
-                                    Do not use markdown unless necessary,
-                                    because your response will be spoken aloud.
+                                    Avoid markdown when possible.
                                     """.trimIndent()
                                 )
                             }
@@ -954,7 +880,7 @@ class AssistantService : Service(), RecognitionListener {
 
                 url,
 
-                jsonBody,
+                body,
 
                 { response ->
 
@@ -970,17 +896,15 @@ class AssistantService : Service(), RecognitionListener {
                                 .getJSONObject(0)
                                 .getJSONObject("message")
 
-                        val aiResponse =
+                        val answer =
                             message
                                 .getString("content")
                                 .trim()
 
-                        if (
-                            aiResponse.isNotBlank()
-                        ) {
+                        if (answer.isNotBlank()) {
 
                             speak(
-                                aiResponse,
+                                answer,
                                 "AI_RESPONSE"
                             )
 
@@ -988,7 +912,7 @@ class AssistantService : Service(), RecognitionListener {
 
                             speak(
                                 "I received an empty response, Sir.",
-                                "EMPTY_AI"
+                                "EMPTY_RESPONSE"
                             )
                         }
 
@@ -998,7 +922,7 @@ class AssistantService : Service(), RecognitionListener {
 
                         speak(
                             "Sorry Sir, I could not process the AI response.",
-                            "AI_PARSE_ERROR"
+                            "AI_ERROR"
                         )
                     }
                 },
@@ -1008,7 +932,7 @@ class AssistantService : Service(), RecognitionListener {
                     error.printStackTrace()
 
                     speak(
-                        "Sorry Sir, I am having trouble connecting to my AI system.",
+                        "Sorry Sir, I cannot connect to my AI system right now.",
                         "NETWORK_ERROR"
                     )
                 }
@@ -1041,9 +965,9 @@ class AssistantService : Service(), RecognitionListener {
         )
     }
 
-    // =========================================================
+    // =====================================================
     // AUDIO FOCUS
-    // =========================================================
+    // =====================================================
 
     private fun setupAudioFocus() {
 
@@ -1054,7 +978,6 @@ class AssistantService : Service(), RecognitionListener {
                 when (focusChange) {
 
                     AudioManager.AUDIOFOCUS_LOSS,
-
                     AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
 
                         isListeningActive = false
@@ -1086,9 +1009,9 @@ class AssistantService : Service(), RecognitionListener {
         )
     }
 
-    // =========================================================
-    // RECOGNITION CALLBACKS
-    // =========================================================
+    // =====================================================
+    // EMPTY CALLBACKS
+    // =====================================================
 
     override fun onReadyForSpeech(
         params: Bundle?
@@ -1120,13 +1043,7 @@ class AssistantService : Service(), RecognitionListener {
 
         handler.postDelayed(
             {
-                if (
-                    isListeningActive &&
-                    !isSpeaking &&
-                    !isRecognizerListening
-                ) {
-                    startListening()
-                }
+                startListening()
             },
             500
         )
@@ -1137,11 +1054,11 @@ class AssistantService : Service(), RecognitionListener {
         params: Bundle?
     ) {}
 
-    // =========================================================
-    // FOREGROUND NOTIFICATION
-    // =========================================================
+    // =====================================================
+    // NOTIFICATION
+    // =====================================================
 
-    private fun startForegroundServiceNotification() {
+    private fun createNotification() {
 
         val channelId =
             "jarvis_service_channel"
@@ -1153,11 +1070,8 @@ class AssistantService : Service(), RecognitionListener {
 
             val channel =
                 NotificationChannel(
-
                     channelId,
-
                     "JARVIS Assistant",
-
                     NotificationManager.IMPORTANCE_LOW
                 )
 
@@ -1198,21 +1112,17 @@ class AssistantService : Service(), RecognitionListener {
         )
     }
 
-    // =========================================================
-    // SERVICE DESTROY
-    // =========================================================
+    // =====================================================
+    // DESTROY
+    // =====================================================
 
     override fun onDestroy() {
 
         isListeningActive = false
-
         isAwake = false
-
         isRecognizerListening = false
-
         isSpeaking = false
-
-        wakeDetectedThisSession = false
+        wakeHandled = false
 
         handler.removeCallbacksAndMessages(
             null
