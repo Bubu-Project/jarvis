@@ -35,7 +35,7 @@ class AssistantService : Service(), RecognitionListener {
     private lateinit var actionExecutor: ActionExecutor
 
     // API KEY YAHAN APNI EXISTING GROQ KEY PASTE KARNA 👇
-    private val LLAMA_API_KEY = "PASTE_YOUR_EXISTING_GROQ_KEY_HERE"
+    private val LLAMA_API_KEY = "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"
 
     private val handler = Handler(Looper.getMainLooper())
 
