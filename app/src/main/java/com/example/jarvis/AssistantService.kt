@@ -67,7 +67,12 @@ class AssistantService : Service(), RecognitionListener {
 
     override fun onCreate() {
         super.onCreate()
-
+    if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+    android.util.Log.e(
+        "JARVIS_SPEECH",
+        "Speech recognition is NOT available on this device"
+    )
+}
         audioManager =
             getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -220,8 +225,15 @@ class AssistantService : Service(), RecognitionListener {
             speechRecognizer.destroy()
         } catch (_: Exception) {}
 
-        speechRecognizer =
-            SpeechRecognizer.createSpeechRecognizer(this)
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+    speak(
+        "Sir, speech recognition is not available on this device.",
+        "SPEECH_UNAVAILABLE"
+    )
+    return
+}
+
+speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
 
         speechRecognizer.setRecognitionListener(this)
 
@@ -1031,23 +1043,26 @@ class AssistantService : Service(), RecognitionListener {
         isRecognizerListening = false
     }
 
-    override fun onError(
-        error: Int
-    ) {
+    override fun onError(error: Int) {
 
-        isRecognizerListening = false
+    isRecognizerListening = false
 
-        if (!isListeningActive) return
+    android.util.Log.e(
+        "JARVIS_SPEECH",
+        "SpeechRecognizer error code: $error"
+    )
 
-        if (isSpeaking) return
+    if (!isListeningActive) return
 
-        handler.postDelayed(
-            {
-                startListening()
-            },
-            500
-        )
-    }
+    if (isSpeaking) return
+
+    handler.postDelayed(
+        {
+            startListening()
+        },
+        1000
+    )
+}
 
     override fun onEvent(
         eventType: Int,
