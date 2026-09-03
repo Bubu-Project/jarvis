@@ -765,7 +765,7 @@ class AssistantService : Service(), RecognitionListener {
                                 "EMPTY_RESPONSE"
                             )
 
-                            return
+                            
                         }
 
                         val message =
