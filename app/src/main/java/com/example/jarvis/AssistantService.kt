@@ -427,7 +427,13 @@ speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
     override fun onResults(
         results: Bundle?
     ) {
-
+        handler.post {
+        android.widget.Toast.makeText(
+        this,
+        "onResults CALLED",
+        android.widget.Toast.LENGTH_SHORT
+    ).show()
+}
         isRecognizerListening = false
 
         if (wakeHandled) {
