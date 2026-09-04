@@ -49,7 +49,7 @@ class AssistantService : Service(), RecognitionListener {
     private var isSpeaking = false
     private var isAwake = false
     private var ttsReady = false
-
+    private var speechErrorReported = false
     private var wakeHandled = false
     private var recognizerRestartPending = false
 
