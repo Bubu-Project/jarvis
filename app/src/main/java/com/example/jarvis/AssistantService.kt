@@ -1051,13 +1051,23 @@ speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
         "JARVIS_SPEECH",
         "SpeechRecognizer error code: $error"
     )
+
+    handler.post {
+        android.widget.Toast.makeText(
+            this,
+            "Speech error: $error",
+            android.widget.Toast.LENGTH_SHORT
+        ).show()
+    }
+
     if (!speechErrorReported) {
-    speechErrorReported = true
-    speak(
-        "Speech recognition error code $error",
-        "SPEECH_ERROR"
-    )
-}
+        speechErrorReported = true
+        speak(
+            "Speech recognition error code $error",
+            "SPEECH_ERROR"
+        )
+    }
+
     if (!isListeningActive) return
 
     if (isSpeaking) return
@@ -1066,9 +1076,10 @@ speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
         {
             startListening()
         },
-        1000
+        2000
     )
 }
+
 
     override fun onEvent(
         eventType: Int,
