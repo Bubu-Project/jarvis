@@ -1051,7 +1051,13 @@ speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
         "JARVIS_SPEECH",
         "SpeechRecognizer error code: $error"
     )
-
+    if (!speechErrorReported) {
+    speechErrorReported = true
+    speak(
+        "Speech recognition error code $error",
+        "SPEECH_ERROR"
+    )
+}
     if (!isListeningActive) return
 
     if (isSpeaking) return
