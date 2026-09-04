@@ -150,6 +150,12 @@ class AssistantService : Service(), RecognitionListener {
 
                     handler.post {
 
+                        android.widget.Toast.makeText(
+                            this@AssistantService,
+                            "TTS DONE - restarting listen",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+
                         isSpeaking = false
 
                         if (isListeningActive) {
@@ -295,6 +301,14 @@ speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
 
     private fun startListening() {
 
+        handler.post {
+            android.widget.Toast.makeText(
+                this,
+                "startListening CALLED",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+
         if (!isListeningActive) return
 
         if (isSpeaking) return
@@ -428,12 +442,13 @@ speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
         results: Bundle?
     ) {
         handler.post {
-        android.widget.Toast.makeText(
-        this,
-        "onResults CALLED",
-        android.widget.Toast.LENGTH_SHORT
-    ).show()
-}
+            android.widget.Toast.makeText(
+                this,
+                "onResults CALLED",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+
         isRecognizerListening = false
 
         if (wakeHandled) {
@@ -462,6 +477,14 @@ speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
             )
 
         if (resultsList.isNullOrEmpty()) {
+
+            handler.post {
+                android.widget.Toast.makeText(
+                    this,
+                    "Got EMPTY result (mic heard nothing clear)",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
 
             handler.postDelayed(
                 {
@@ -1067,13 +1090,12 @@ speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
     }
 
     if (!speechErrorReported) {
-        speechErrorReported = true
-        speak(
-            "Speech recognition error code $error",
-            "SPEECH_ERROR"
-        )
-    }
-
+    speechErrorReported = true
+    speak(
+        "Speech recognition error code $error",
+        "SPEECH_ERROR"
+    )
+}
     if (!isListeningActive) return
 
     if (isSpeaking) return
@@ -1085,7 +1107,6 @@ speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
         2000
     )
 }
-
 
     override fun onEvent(
         eventType: Int,
