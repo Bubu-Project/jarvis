@@ -327,23 +327,32 @@ class AssistantService : Service(), RecognitionListener {
             if (isSpeaking) return@post
 
             if (isRecognizerListening) return@post
-
             try {
 
-                wakeHandled = false
+              wakeHandled = false
 
-                isRecognizerListening = true
+              isRecognizerListening = true
 
-                speechRecognizer.startListening(
-                    recognizerIntent
-                )
+            speechRecognizer.startListening(
+        recognizerIntent
+    )
 
-            } catch (_: Exception) {
+        }. catch (e: Exception) {
 
-                isRecognizerListening = false
+    isRecognizerListening = false
 
-                restartRecognizer()
-            }
+    handler.post {
+        android.widget.Toast.makeText(
+            this,
+            "CRASH in startListening: ${e.message}",
+            android.widget.Toast.LENGTH_LONG
+        ).show()
+    }
+
+    e.printStackTrace()
+
+    restartRecognizer()
+}
         }
     }
 
