@@ -239,9 +239,12 @@ class AssistantService : Service(), RecognitionListener {
     return
 }
 
-speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
 
-        speechRecognizer.setRecognitionListener(this)
+handler.post {
+    speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+    speechRecognizer.setRecognitionListener(this)
+}
+    
 
         recognizerIntent =
             Intent(
@@ -265,10 +268,7 @@ speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
                     true
                 )
 
-                putExtra(
-                    RecognizerIntent.EXTRA_CALLING_PACKAGE,
-                    packageName
-                )
+                
 
                 putExtra(
                     RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS,
