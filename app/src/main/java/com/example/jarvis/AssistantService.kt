@@ -225,26 +225,39 @@ class AssistantService : Service(), RecognitionListener {
     // SPEECH RECOGNIZER
     // =====================================================
 
+    
     private fun setupRecognizer() {
 
-        try {
-            speechRecognizer.destroy()
-        } catch (_: Exception) {}
+    try {
+        speechRecognizer.destroy()
+    } catch (_: Exception) {}
 
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-    speak(
-        "Sir, speech recognition is not available on this device.",
-        "SPEECH_UNAVAILABLE"
-    )
-    return
-}
+    if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+        speak(
+            "Sir, speech recognition is not available on this device.",
+            "SPEECH_UNAVAILABLE"
+        )
+        return
+    }
 
+    try {
 
-handler.post {
-    speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
-    speechRecognizer.setRecognitionListener(this)
-}
-    
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+
+        speechRecognizer.setRecognitionListener(this)
+
+    } catch (e: Exception) {
+
+        handler.post {
+            android.widget.Toast.makeText(
+                this,
+                "CRASH in setupRecognizer: ${e.message}",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+        }
+
+        e.printStackTrace()
+    }
 
         recognizerIntent =
             Intent(
