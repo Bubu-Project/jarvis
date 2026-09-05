@@ -67,12 +67,12 @@ class AssistantService : Service(), RecognitionListener {
 
     override fun onCreate() {
         super.onCreate()
-    if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-    android.util.Log.e(
-        "JARVIS_SPEECH",
-        "Speech recognition is NOT available on this device"
-    )
-}
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            android.util.Log.e(
+                "JARVIS_SPEECH",
+                "Speech recognition is NOT available on this device"
+            )
+        }
         audioManager =
             getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -225,39 +225,40 @@ class AssistantService : Service(), RecognitionListener {
     // SPEECH RECOGNIZER
     // =====================================================
 
-    
     private fun setupRecognizer() {
 
-    try {
-        speechRecognizer.destroy()
-    } catch (_: Exception) {}
+        try {
+            speechRecognizer.destroy()
+        } catch (_: Exception) {}
 
-    if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-        speak(
-            "Sir, speech recognition is not available on this device.",
-            "SPEECH_UNAVAILABLE"
-        )
-        return
-    }
-
-    try {
-
-        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
-
-        speechRecognizer.setRecognitionListener(this)
-
-    } catch (e: Exception) {
-
-        handler.post {
-            android.widget.Toast.makeText(
-                this,
-                "CRASH in setupRecognizer: ${e.message}",
-                android.widget.Toast.LENGTH_LONG
-            ).show()
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            speak(
+                "Sir, speech recognition is not available on this device.",
+                "SPEECH_UNAVAILABLE"
+            )
+            return
         }
 
-        e.printStackTrace()
-    }
+        try {
+
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+
+            speechRecognizer.setRecognitionListener(this)
+
+        } catch (e: Exception) {
+
+            handler.post {
+                android.widget.Toast.makeText(
+                    this,
+                    "CRASH in setupRecognizer: ${e.message}",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+
+            e.printStackTrace()
+
+            return
+        }
 
         recognizerIntent =
             Intent(
@@ -269,8 +270,6 @@ class AssistantService : Service(), RecognitionListener {
                     RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
                 )
 
-    
-
                 putExtra(
                     RecognizerIntent.EXTRA_MAX_RESULTS,
                     5
@@ -280,8 +279,6 @@ class AssistantService : Service(), RecognitionListener {
                     RecognizerIntent.EXTRA_PARTIAL_RESULTS,
                     true
                 )
-
-                
 
                 putExtra(
                     RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS,
@@ -327,32 +324,33 @@ class AssistantService : Service(), RecognitionListener {
             if (isSpeaking) return@post
 
             if (isRecognizerListening) return@post
+
             try {
 
-              wakeHandled = false
+                wakeHandled = false
 
-              isRecognizerListening = true
+                isRecognizerListening = true
 
-            speechRecognizer.startListening(
-        recognizerIntent
-    )
+                speechRecognizer.startListening(
+                    recognizerIntent
+                )
 
-        }. catch (e: Exception) {
+            } catch (e: Exception) {
 
-    isRecognizerListening = false
+                isRecognizerListening = false
 
-    handler.post {
-        android.widget.Toast.makeText(
-            this,
-            "CRASH in startListening: ${e.message}",
-            android.widget.Toast.LENGTH_LONG
-        ).show()
-    }
+                handler.post {
+                    android.widget.Toast.makeText(
+                        this,
+                        "CRASH in startListening: ${e.message}",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
 
-    e.printStackTrace()
+                e.printStackTrace()
 
-    restartRecognizer()
-}
+                restartRecognizer()
+            }
         }
     }
 
@@ -390,9 +388,19 @@ class AssistantService : Service(), RecognitionListener {
                     recognizerIntent
                 )
 
-            } catch (_: Exception) {
+            } catch (e: Exception) {
 
                 isRecognizerListening = false
+
+                handler.post {
+                    android.widget.Toast.makeText(
+                        this,
+                        "CRASH in restartRecognizer: ${e.message}",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+
+                e.printStackTrace()
 
                 handler.postDelayed(
                     {
@@ -1070,9 +1078,25 @@ class AssistantService : Service(), RecognitionListener {
 
     override fun onReadyForSpeech(
         params: Bundle?
-    ) {}
+    ) {
+        handler.post {
+            android.widget.Toast.makeText(
+                this,
+                "READY FOR SPEECH",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
 
-    override fun onBeginningOfSpeech() {}
+    override fun onBeginningOfSpeech() {
+        handler.post {
+            android.widget.Toast.makeText(
+                this,
+                "BEGINNING OF SPEECH",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
 
     override fun onRmsChanged(
         rmsdB: Float
@@ -1088,39 +1112,40 @@ class AssistantService : Service(), RecognitionListener {
 
     override fun onError(error: Int) {
 
-    isRecognizerListening = false
+        isRecognizerListening = false
 
-    android.util.Log.e(
-        "JARVIS_SPEECH",
-        "SpeechRecognizer error code: $error"
-    )
+        android.util.Log.e(
+            "JARVIS_SPEECH",
+            "SpeechRecognizer error code: $error"
+        )
 
-    handler.post {
-        android.widget.Toast.makeText(
-            this,
-            "Speech error: $error",
-            android.widget.Toast.LENGTH_SHORT
-        ).show()
+        handler.post {
+            android.widget.Toast.makeText(
+                this,
+                "Speech error: $error",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+
+        if (!speechErrorReported) {
+            speechErrorReported = true
+            speak(
+                "Speech recognition error code $error",
+                "SPEECH_ERROR"
+            )
+        }
+
+        if (!isListeningActive) return
+
+        if (isSpeaking) return
+
+        handler.postDelayed(
+            {
+                startListening()
+            },
+            2000
+        )
     }
-
-    if (!speechErrorReported) {
-    speechErrorReported = true
-    speak(
-        "Speech recognition error code $error",
-        "SPEECH_ERROR"
-    )
-}
-    if (!isListeningActive) return
-
-    if (isSpeaking) return
-
-    handler.postDelayed(
-        {
-            startListening()
-        },
-        2000
-    )
-}
 
     override fun onEvent(
         eventType: Int,
