@@ -253,15 +253,7 @@ speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
                     RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
                 )
 
-                putExtra(
-                    RecognizerIntent.EXTRA_LANGUAGE,
-                    "en-IN"
-                )
-
-                putExtra(
-                    RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE,
-                    "en-IN"
-                )
+    
 
                 putExtra(
                     RecognizerIntent.EXTRA_MAX_RESULTS,
