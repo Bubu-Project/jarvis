@@ -68,9 +68,18 @@ class MainActivity : AppCompatActivity() {
 
         val testButton = Button(this)
         testButton.text = "TEST MIC (Foreground)"
+        testButton.setBackgroundColor(android.graphics.Color.RED)
+        testButton.setTextColor(android.graphics.Color.WHITE)
 
         val rootView = statusText.parent as ViewGroup
-        rootView.addView(testButton)
+
+        val testButtonParams = android.widget.LinearLayout.LayoutParams(
+            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        testButtonParams.topMargin = 40
+
+        rootView.addView(testButton, testButtonParams)
 
         testButton.setOnClickListener {
 
