@@ -5,8 +5,13 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -25,6 +30,8 @@ class MainActivity : AppCompatActivity() {
     }.toTypedArray()
 
     private val PERMISSION_REQUEST_CODE = 101
+
+    private var testRecognizer: SpeechRecognizer? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,6 +57,81 @@ class MainActivity : AppCompatActivity() {
 
         if (!hasAllPermissions()) {
             requestPermissions()
+        }
+
+        // =====================================================
+        // TEMPORARY TEST BUTTON
+        // Ye button seedha Activity (foreground) se mic test karta hai,
+        // Service use kiye bina - taaki pata chale problem Service
+        // context ki hai ya kuch aur.
+        // =====================================================
+
+        val testButton = Button(this)
+        testButton.text = "TEST MIC (Foreground)"
+
+        val rootView = statusText.parent as ViewGroup
+        rootView.addView(testButton)
+
+        testButton.setOnClickListener {
+
+            if (!hasAllPermissions()) {
+                requestPermissions()
+                return@setOnClickListener
+            }
+
+            Toast.makeText(this, "Starting foreground mic test...", Toast.LENGTH_SHORT).show()
+
+            try {
+                testRecognizer?.destroy()
+            } catch (_: Exception) {}
+
+            testRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+
+            testRecognizer?.setRecognitionListener(object : RecognitionListener {
+
+                override fun onReadyForSpeech(params: Bundle?) {
+                    Toast.makeText(this@MainActivity, "TEST: READY FOR SPEECH", Toast.LENGTH_SHORT).show()
+                }
+
+                override fun onBeginningOfSpeech() {
+                    Toast.makeText(this@MainActivity, "TEST: BEGINNING OF SPEECH", Toast.LENGTH_SHORT).show()
+                }
+
+                override fun onRmsChanged(rmsdB: Float) {}
+
+                override fun onBufferReceived(buffer: ByteArray?) {}
+
+                override fun onEndOfSpeech() {
+                    Toast.makeText(this@MainActivity, "TEST: END OF SPEECH", Toast.LENGTH_SHORT).show()
+                }
+
+                override fun onError(error: Int) {
+                    Toast.makeText(this@MainActivity, "TEST: ERROR CODE $error", Toast.LENGTH_LONG).show()
+                }
+
+                override fun onResults(results: Bundle?) {
+                    val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    val text = list?.firstOrNull() ?: "(empty)"
+                    Toast.makeText(this@MainActivity, "TEST RESULT: $text", Toast.LENGTH_LONG).show()
+                }
+
+                override fun onPartialResults(partialResults: Bundle?) {}
+
+                override fun onEvent(eventType: Int, params: Bundle?) {}
+            })
+
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(
+                    RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+                )
+            }
+
+            try {
+                testRecognizer?.startListening(intent)
+            } catch (e: Exception) {
+                Toast.makeText(this, "TEST CRASH: ${e.message}", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
