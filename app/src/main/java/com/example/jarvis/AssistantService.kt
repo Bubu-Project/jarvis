@@ -94,7 +94,7 @@ class AssistantService : Service(), RecognitionListener {
             {
                 startListening()
             },
-            1000
+            3000
         )
     }
 
@@ -292,7 +292,7 @@ class AssistantService : Service(), RecognitionListener {
 
                 putExtra(
                     RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
-                    2000L
+                    3000L
                 )
             }
     }
@@ -327,15 +327,20 @@ class AssistantService : Service(), RecognitionListener {
 
             try {
 
-                wakeHandled = false
+             speechRecognizer.cancel()
 
-                isRecognizerListening = true
+              } catch (_: Exception) {}
 
-                speechRecognizer.startListening(
-                    recognizerIntent
-                )
+             try { 
+              wakeHandled = false
 
-            } catch (e: Exception) {
+          isRecognizerListening = true
+
+           speechRecognizer.startListening(
+             recognizerIntent
+    )
+
+} catch (e: Exception) {
 
                 isRecognizerListening = false
 
