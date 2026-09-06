@@ -164,7 +164,7 @@ class AssistantService : Service(), RecognitionListener {
                                 {
                                     startListening()
                                 },
-                                350
+                                800
                             )
                         }
                     }
@@ -184,7 +184,7 @@ class AssistantService : Service(), RecognitionListener {
                                 {
                                     startListening()
                                 },
-                                350
+                                800
                             )
                         }
                     }
@@ -282,7 +282,7 @@ class AssistantService : Service(), RecognitionListener {
 
                 putExtra(
                     RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS,
-                    500L
+                    200L
                 )
 
                 putExtra(
