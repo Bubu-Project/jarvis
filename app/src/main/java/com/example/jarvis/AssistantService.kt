@@ -60,10 +60,13 @@ class AssistantService : Service(), RecognitionListener {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // =====================================================
+    // CREATE SERVICE
+    // =====================================================
     override fun onCreate() {
         super.onCreate()
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            android.util.Log.e("JARVIS_SPEECH", "Speech recognition is NOT available")
+            android.util.Log.e("JARVIS_DEBUG", "Speech recognition is NOT available on this device")
         }
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         actionExecutor = ActionExecutor(this)
@@ -294,27 +297,53 @@ class AssistantService : Service(), RecognitionListener {
     }
 
     // =====================================================
-    // COMMAND EXECUTOR (Baaki commands waise hi rahenge)
+    // COMMAND EXECUTOR (Saare commands wapas add kar diye)
     // =====================================================
     private fun executeVoiceCommand(command: String) {
         val cmd = command.lowercase(Locale.US).trim()
 
         when {
-            cmd.contains("flashlight on") || cmd.contains("torch on") -> {
+            // FLASHLIGHT ON
+            cmd.contains("flashlight on") || cmd.contains("torch on") || cmd.contains("turn on flashlight") || cmd.contains("turn flashlight on") -> {
                 actionExecutor.toggleFlashlight(true)
                 speak("Flashlight turned on, Sir.", "FLASH_ON")
             }
-            cmd.contains("flashlight off") || cmd.contains("torch off") -> {
+            // FLASHLIGHT OFF
+            cmd.contains("flashlight off") || cmd.contains("torch off") || cmd.contains("turn off flashlight") || cmd.contains("turn flashlight off") -> {
                 actionExecutor.toggleFlashlight(false)
                 speak("Flashlight turned off, Sir.", "FLASH_OFF")
             }
+            // OPEN APP
             cmd.startsWith("open ") -> {
                 val appName = cmd.removePrefix("open ").trim()
                 val success = actionExecutor.openApp(appName)
-                if (success) speak("Opening $appName, Sir.", "OPEN_APP")
-                else speak("I could not find that app, Sir.", "APP_ERROR")
+                if (success) {
+                    speak("Opening $appName, Sir.", "OPEN_APP")
+                } else {
+                    speak("I could not find that app, Sir.", "APP_ERROR")
+                }
             }
-            // ... baaki commands (call, youtube, etc.) yahan rahenge
+            // CALL
+            cmd.startsWith("call ") -> {
+                val contactName = cmd.removePrefix("call ").trim()
+                actionExecutor.callContact(contactName)
+                speak("Calling $contactName, Sir.", "CALL")
+            }
+            // YOUTUBE
+            cmd.contains("youtube") && cmd.contains("play") -> {
+                val query = cmd.replace("play", "").replace("on youtube", "").replace("youtube", "").trim()
+                if (query.isNotBlank()) {
+                    actionExecutor.playOnYoutube(query)
+                    speak("Playing $query on YouTube, Sir.", "YOUTUBE")
+                } else {
+                    speak("What would you like me to play, Sir?", "YOUTUBE_EMPTY")
+                }
+            }
+            // JOB / WORK MODE
+            cmd.startsWith("job ") || cmd.contains("find me a job") || cmd.contains("job search") || cmd.contains("career") || cmd.contains("resume") || cmd.contains("interview") -> {
+                speak("Searching for job information, Sir.", "JOB_SEARCH")
+            }
+            // UNKNOWN COMMAND
             else -> {
                 speak("I am not sure how to do that yet, Sir.", "UNKNOWN")
             }
@@ -323,7 +352,6 @@ class AssistantService : Service(), RecognitionListener {
 
     // =====================================================
     // BAKEI FUNCTIONS (createNotification, setupAudioFocus, etc.)
-    // Ye tere purane code mein hain, unhe waise hi rakh.
     // =====================================================
     private fun createNotification() {
         val channelId = "jarvis_channel"
@@ -343,7 +371,7 @@ class AssistantService : Service(), RecognitionListener {
     }
 
     private fun setupAudioFocus() {
-        // Tera purana audio focus code yahan
+        // Tera purana audio focus code yahan (agar hai toh)
     }
 
     // =====================================================
