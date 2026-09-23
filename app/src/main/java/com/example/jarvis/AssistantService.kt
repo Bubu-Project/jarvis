@@ -34,7 +34,7 @@ class AssistantService : Service(), RecognitionListener {
     private lateinit var audioManager: AudioManager
     private lateinit var actionExecutor: ActionExecutor
     private lateinit var requestQueue: RequestQueue
-    private val wakeWordDetector = WakeWordDetector() // Naya part
+    private val wakeWordDetector = WakeWordDetector()
 
     // =====================================================
     // GROQ API KEY
@@ -66,7 +66,7 @@ class AssistantService : Service(), RecognitionListener {
     override fun onCreate() {
         super.onCreate()
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            android.util.Log.e("JARVIS_DEBUG", "Speech recognition is NOT available on this device")
+            android.util.Log.e("JARVIS_SPEECH", "Speech recognition is NOT available")
         }
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         actionExecutor = ActionExecutor(this)
@@ -297,7 +297,7 @@ class AssistantService : Service(), RecognitionListener {
     }
 
     // =====================================================
-    // COMMAND EXECUTOR (Saare commands wapas add kar diye)
+    // COMMAND EXECUTOR (Saare commands add hain)
     // =====================================================
     private fun executeVoiceCommand(command: String) {
         val cmd = command.lowercase(Locale.US).trim()
