@@ -465,8 +465,12 @@ class AssistantService : Service(), RecognitionListener {
                 }
             },
             { error ->
-                android.util.Log.e("JARVIS_AI", "API error: ${error.message}")
-                speak("Sorry Sir, network problem hai.", "AI_NETWORK_ERROR")
+                val errMsg = when {
+                    error.networkResponse != null -> "HTTP ${error.networkResponse.statusCode}"
+                    else -> error.message ?: "Unknown"
+                }
+                android.util.Log.e("JARVIS_AI", "API ERROR: $errMsg")
+                speak("Sir, error code $errMsg", "AI_NETWORK_ERROR")
             }
         ) {
             @Throws(AuthFailureError::class)
