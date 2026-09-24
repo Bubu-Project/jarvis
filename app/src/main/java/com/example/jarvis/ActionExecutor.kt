@@ -1,21 +1,25 @@
 package com.example.jarvis
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraManager
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Build
 import android.provider.ContactsContract
 import android.telephony.SmsManager
+import androidx.core.content.ContextCompat
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class ActionExecutor(private val context: Context) {
 
     fun openApp(appName: String): Boolean {
         val pm = context.packageManager
-        // ✅ यहाँ PackageManager फ्लैग को सेफ तरीके से डिक्लेअर कर दिया गया है
         val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
-
         val normalizedQuery = appName.lowercase().replace(" ", "")
         val match = apps.firstOrNull {
             pm.getApplicationLabel(it).toString().lowercase().replace(" ", "").contains(normalizedQuery)
@@ -27,9 +31,20 @@ class ActionExecutor(private val context: Context) {
         return true
     }
 
+    // ✅ FIXED: Permission check + Dialer fallback
     fun callContact(name: String): Boolean {
         val phoneNumber = lookupContactNumber(name) ?: return false
-        val intent = Intent(Intent.ACTION_CALL).apply {
+
+        val hasCallPermission = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.CALL_PHONE
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val intent = if (hasCallPermission) {
+            Intent(Intent.ACTION_CALL)
+        } else {
+            // Agar permission nahi hai, toh dialer khol do (number ready hoga)
+            Intent(Intent.ACTION_DIAL)
+        }.apply {
             data = Uri.parse("tel:$phoneNumber")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
@@ -40,7 +55,6 @@ class ActionExecutor(private val context: Context) {
     fun sendSms(name: String, message: String): Boolean {
         val phoneNumber = lookupContactNumber(name) ?: return false
         try {
-            // ✅ SmsManager को नए और पुराने दोनों एंड्रॉयड वर्शन्स के लिए सेफ बना दिया गया है
             val smsManager: SmsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 context.getSystemService(SmsManager::class.java)
             } else {
@@ -55,17 +69,34 @@ class ActionExecutor(private val context: Context) {
         }
     }
 
+    // ✅ FIXED: Better YouTube intent + browser fallback
     fun playOnYoutube(query: String) {
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            data = Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(query)}")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // Pehle try karo YouTube app se search karne ki
+        val youtubeIntent = Intent(Intent.ACTION_SEARCH).apply {
             setPackage("com.google.android.youtube")
+            putExtra("query", query)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
+
         try {
-            context.startActivity(intent)
+            context.startActivity(youtubeIntent)
         } catch (e: Exception) {
-            intent.setPackage(null)
-            context.startActivity(intent)
+            // Agar YouTube app search intent support nahi karta, toh URL se kholo
+            try {
+                val urlIntent = Intent(Intent.ACTION_VIEW).apply {
+                    data = Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(query)}")
+                    setPackage("com.google.android.youtube")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(urlIntent)
+            } catch (e2: Exception) {
+                // Agar YouTube app hi nahi hai, toh browser mein kholo
+                val browserIntent = Intent(Intent.ACTION_VIEW).apply {
+                    data = Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(query)}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(browserIntent)
+            }
         }
     }
 
@@ -79,7 +110,30 @@ class ActionExecutor(private val context: Context) {
         }
     }
 
+    // ✅ NAYA: Time aur Date batane ke liye
+    fun getCurrentTime(): String {
+        val formatter = SimpleDateFormat("hh:mm a", Locale.US)
+        return formatter.format(Date())
+    }
+
+    fun getCurrentDate(): String {
+        val formatter = SimpleDateFormat("EEEE, dd MMMM yyyy", Locale.US)
+        return formatter.format(Date())
+    }
+
+    // ✅ NAYA: Battery status batane ke liye
+    fun getBatteryLevel(): Int {
+        val bm = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+        return bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+    }
+
     private fun lookupContactNumber(name: String): String? {
+        val hasReadPermission = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.READ_CONTACTS
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (!hasReadPermission) return null
+
         val resolver = context.contentResolver
         val cursor = resolver.query(
             ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
