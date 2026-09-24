@@ -361,4 +361,13 @@ class AssistantService : Service(), RecognitionListener {
     override fun onBufferReceived(buffer: ByteArray?) {}
     override fun onEndOfSpeech() {}
     override fun onEvent(eventType: Int, params: Bundle?) {}
+    override fun onDestroy() {
+    super.onDestroy()
+    isListeningActive = false
+    handler.removeCallbacksAndMessages(null)
+    try { speechRecognizer.destroy() } catch (_: Exception) {}
+    try { textToSpeech.stop() } catch (_: Exception) {}
+    try { textToSpeech.shutdown() } catch (_: Exception) {}
+    android.util.Log.d("JARVIS_DEBUG", "Service Destroyed - Mic turned off")
+    }
 }
