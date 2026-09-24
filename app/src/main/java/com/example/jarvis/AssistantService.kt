@@ -18,12 +18,8 @@ import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.core.app.NotificationCompat
-import com.android.volley.Request
 import com.android.volley.RequestQueue
-import com.android.volley.toolbox.JsonObjectRequest
 import com.android.volley.toolbox.Volley
-import org.json.JSONArray
-import org.json.JSONObject
 import java.util.Locale
 
 class AssistantService : Service(), RecognitionListener {
@@ -36,9 +32,6 @@ class AssistantService : Service(), RecognitionListener {
     private lateinit var requestQueue: RequestQueue
     private val wakeWordDetector = WakeWordDetector()
 
-    // =====================================================
-    // GROQ API KEY
-    // =====================================================
     private val LLAMA_API_KEY = "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"
 
     private val handler = Handler(Looper.getMainLooper())
@@ -48,7 +41,6 @@ class AssistantService : Service(), RecognitionListener {
     private var isSpeaking = false
     private var isAwake = false
     private var ttsReady = false
-    private var speechErrorReported = false
     private var wakeHandled = false
     private var recognizerRestartPending = false
 
@@ -60,34 +52,24 @@ class AssistantService : Service(), RecognitionListener {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // =====================================================
-    // CREATE SERVICE
-    // =====================================================
     override fun onCreate() {
         super.onCreate()
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            android.util.Log.e("JARVIS_SPEECH", "Speech recognition is NOT available")
-        }
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         actionExecutor = ActionExecutor(this)
         requestQueue = Volley.newRequestQueue(this)
         createNotification()
         setupTTS()
         setupRecognizer()
-        setupAudioFocus()
         isListeningActive = true
         handler.postDelayed({ startListening() }, 3000)
     }
 
-    // =====================================================
-    // TTS
-    // =====================================================
     private fun setupTTS() {
         textToSpeech = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                val languageResult = textToSpeech.setLanguage(Locale.US)
-                ttsReady = languageResult != TextToSpeech.LANG_MISSING_DATA &&
-                        languageResult != TextToSpeech.LANG_NOT_SUPPORTED
+                val result = textToSpeech.setLanguage(Locale.US)
+                ttsReady = result != TextToSpeech.LANG_MISSING_DATA &&
+                        result != TextToSpeech.LANG_NOT_SUPPORTED
                 textToSpeech.setSpeechRate(1.0f)
                 setupTTSListener()
             }
@@ -107,10 +89,9 @@ class AssistantService : Service(), RecognitionListener {
 
                 override fun onDone(utteranceId: String?) {
                     handler.post {
-                        android.util.Log.d("JARVIS_DEBUG", "TTS DONE - restarting listen")
                         isSpeaking = false
                         if (isListeningActive) {
-                            handler.postDelayed({ startListening() }, 800)
+                            handler.postDelayed({ startListening() }, 1200)
                         }
                     }
                 }
@@ -119,7 +100,7 @@ class AssistantService : Service(), RecognitionListener {
                     handler.post {
                         isSpeaking = false
                         if (isListeningActive) {
-                            handler.postDelayed({ startListening() }, 800)
+                            handler.postDelayed({ startListening() }, 1200)
                         }
                     }
                 }
@@ -137,21 +118,15 @@ class AssistantService : Service(), RecognitionListener {
         }
     }
 
-    // =====================================================
-    // SPEECH RECOGNIZER
-    // =====================================================
     private fun setupRecognizer() {
         try { speechRecognizer.destroy() } catch (_: Exception) {}
 
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            return
-        }
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) return
 
         try {
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
             speechRecognizer.setRecognitionListener(this)
         } catch (e: Exception) {
-            android.util.Log.e("JARVIS_DEBUG", "CRASH in setupRecognizer: ${e.message}")
             return
         }
 
@@ -160,22 +135,17 @@ class AssistantService : Service(), RecognitionListener {
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 200L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
         }
     }
 
-    // =====================================================
-    // START LISTENING
-    // =====================================================
     private fun startListening() {
         if (!isListeningActive || isSpeaking || isRecognizerListening) return
 
         handler.post {
             if (!isListeningActive || isSpeaking || isRecognizerListening) return@post
-            try {
-                speechRecognizer.cancel()
-            } catch (_: Exception) {}
+            try { speechRecognizer.cancel() } catch (_: Exception) {}
 
             try {
                 wakeHandled = false
@@ -183,15 +153,11 @@ class AssistantService : Service(), RecognitionListener {
                 speechRecognizer.startListening(recognizerIntent)
             } catch (e: Exception) {
                 isRecognizerListening = false
-                android.util.Log.e("JARVIS_DEBUG", "CRASH in startListening: ${e.message}")
                 restartRecognizer()
             }
         }
     }
 
-    // =====================================================
-    // RESTART SPEECH RECOGNIZER
-    // =====================================================
     private fun restartRecognizer() {
         if (!isListeningActive || recognizerRestartPending) return
         recognizerRestartPending = true
@@ -207,15 +173,11 @@ class AssistantService : Service(), RecognitionListener {
                 speechRecognizer.startListening(recognizerIntent)
             } catch (e: Exception) {
                 isRecognizerListening = false
-                android.util.Log.e("JARVIS_DEBUG", "CRASH in restartRecognizer: ${e.message}")
                 handler.postDelayed({ startListening() }, 1000)
             }
         }, 800)
     }
 
-    // =====================================================
-    // FINAL RESULT
-    // =====================================================
     override fun onResults(results: Bundle?) {
         isRecognizerListening = false
 
@@ -241,9 +203,6 @@ class AssistantService : Service(), RecognitionListener {
         handleSpeech(spokenText)
     }
 
-    // =====================================================
-    // PARTIAL RESULT
-    // =====================================================
     override fun onPartialResults(partialResults: Bundle?) {
         if (!isListeningActive || isSpeaking || isAwake || wakeHandled) return
 
@@ -270,9 +229,6 @@ class AssistantService : Service(), RecognitionListener {
         }
     }
 
-    // =====================================================
-    // SPEECH HANDLER
-    // =====================================================
     private fun handleSpeech(text: String) {
         if (isAwake) {
             isAwake = false
@@ -296,22 +252,59 @@ class AssistantService : Service(), RecognitionListener {
         }
     }
 
-    // =====================================================
-    // COMMAND EXECUTOR (Saare commands add hain)
-    // =====================================================
     private fun executeVoiceCommand(command: String) {
         val cmd = command.lowercase(Locale.US).trim()
 
         when {
             // FLASHLIGHT ON
-            cmd.contains("flashlight on") || cmd.contains("torch on") || cmd.contains("turn on flashlight") || cmd.contains("turn flashlight on") -> {
+            cmd.contains("flashlight on") || cmd.contains("torch on") -> {
                 actionExecutor.toggleFlashlight(true)
                 speak("Flashlight turned on, Sir.", "FLASH_ON")
             }
             // FLASHLIGHT OFF
-            cmd.contains("flashlight off") || cmd.contains("torch off") || cmd.contains("turn off flashlight") || cmd.contains("turn flashlight off") -> {
+            cmd.contains("flashlight off") || cmd.contains("torch off") -> {
                 actionExecutor.toggleFlashlight(false)
                 speak("Flashlight turned off, Sir.", "FLASH_OFF")
+            }
+            // TIME
+            cmd.contains("time") -> {
+                val time = actionExecutor.getCurrentTime()
+                speak("The current time is $time, Sir.", "TIME")
+            }
+            // DATE
+            cmd.contains("date") || cmd.contains("today") -> {
+                val date = actionExecutor.getCurrentDate()
+                speak("Today is $date, Sir.", "DATE")
+            }
+            // BATTERY
+            cmd.contains("battery") -> {
+                val level = actionExecutor.getBatteryLevel()
+                speak("Your battery is at $level percent, Sir.", "BATTERY")
+            }
+            // CALL
+            cmd.startsWith("call ") -> {
+                val contactName = cmd.removePrefix("call ").trim()
+                val success = actionExecutor.callContact(contactName)
+                if (success) {
+                    speak("Calling $contactName, Sir.", "CALL")
+                } else {
+                    speak("I could not find that contact, Sir.", "CALL_ERROR")
+                }
+            }
+            // YOUTUBE
+            cmd.contains("youtube") || cmd.contains("play") -> {
+                val query = cmd
+                    .replace("play", "")
+                    .replace("on youtube", "")
+                    .replace("youtube", "")
+                    .replace("song", "")
+                    .trim()
+                if (query.isNotBlank()) {
+                    actionExecutor.playOnYoutube(query)
+                    speak("Playing $query on YouTube, Sir.", "YOUTUBE")
+                } else {
+                    speak("What would you like me to play, Sir?", "YOUTUBE_EMPTY")
+                }
             }
             // OPEN APP
             cmd.startsWith("open ") -> {
@@ -323,40 +316,19 @@ class AssistantService : Service(), RecognitionListener {
                     speak("I could not find that app, Sir.", "APP_ERROR")
                 }
             }
-            // CALL
-            cmd.startsWith("call ") -> {
-                val contactName = cmd.removePrefix("call ").trim()
-                actionExecutor.callContact(contactName)
-                speak("Calling $contactName, Sir.", "CALL")
-            }
-            // YOUTUBE
-            cmd.contains("youtube") && cmd.contains("play") -> {
-                val query = cmd.replace("play", "").replace("on youtube", "").replace("youtube", "").trim()
-                if (query.isNotBlank()) {
-                    actionExecutor.playOnYoutube(query)
-                    speak("Playing $query on YouTube, Sir.", "YOUTUBE")
-                } else {
-                    speak("What would you like me to play, Sir?", "YOUTUBE_EMPTY")
-                }
-            }
-            // JOB / WORK MODE
-            cmd.startsWith("job ") || cmd.contains("find me a job") || cmd.contains("job search") || cmd.contains("career") || cmd.contains("resume") || cmd.contains("interview") -> {
-                speak("Searching for job information, Sir.", "JOB_SEARCH")
-            }
-            // UNKNOWN COMMAND
+            // UNKNOWN
             else -> {
                 speak("I am not sure how to do that yet, Sir.", "UNKNOWN")
             }
         }
     }
 
-    // =====================================================
-    // BAKEI FUNCTIONS (createNotification, setupAudioFocus, etc.)
-    // =====================================================
     private fun createNotification() {
         val channelId = "jarvis_channel"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(channelId, "Jarvis Service", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(
+                channelId, "Jarvis Service", NotificationManager.IMPORTANCE_LOW
+            )
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
         }
@@ -370,17 +342,16 @@ class AssistantService : Service(), RecognitionListener {
         startForeground(1, notification)
     }
 
-    private fun setupAudioFocus() {
-        // Tera purana audio focus code yahan (agar hai toh)
-    }
-
-    // =====================================================
-    // BAKEI RECOGNITION LISTENER METHODS (Zaroori hain)
-    // =====================================================
     override fun onError(error: Int) {
         isRecognizerListening = false
         if (isListeningActive && !isSpeaking) {
-            handler.postDelayed({ startListening() }, 500)
+            val delayMs = when (error) {
+                SpeechRecognizer.ERROR_NO_MATCH -> 300L
+                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> 300L
+                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> 1500L
+                else -> 500L
+            }
+            handler.postDelayed({ startListening() }, delayMs)
         }
     }
 
