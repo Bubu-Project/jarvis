@@ -32,6 +32,9 @@ class AssistantService : Service(), RecognitionListener {
     private lateinit var requestQueue: RequestQueue
     private val wakeWordDetector = WakeWordDetector()
 
+    // =====================================================
+    // GROQ API KEY
+    // =====================================================
     private val LLAMA_API_KEY = "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"
 
     private val handler = Handler(Looper.getMainLooper())
@@ -52,8 +55,14 @@ class AssistantService : Service(), RecognitionListener {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // =====================================================
+    // CREATE SERVICE
+    // =====================================================
     override fun onCreate() {
         super.onCreate()
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            android.util.Log.e("JARVIS_DEBUG", "Speech recognition is NOT available")
+        }
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         actionExecutor = ActionExecutor(this)
         requestQueue = Volley.newRequestQueue(this)
@@ -64,6 +73,9 @@ class AssistantService : Service(), RecognitionListener {
         handler.postDelayed({ startListening() }, 3000)
     }
 
+    // =====================================================
+    // TTS
+    // =====================================================
     private fun setupTTS() {
         textToSpeech = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
@@ -89,6 +101,7 @@ class AssistantService : Service(), RecognitionListener {
 
                 override fun onDone(utteranceId: String?) {
                     handler.post {
+                        android.util.Log.d("JARVIS_DEBUG", "TTS DONE - restarting listen")
                         isSpeaking = false
                         if (isListeningActive) {
                             handler.postDelayed({ startListening() }, 1200)
@@ -115,18 +128,33 @@ class AssistantService : Service(), RecognitionListener {
             try { speechRecognizer.stopListening() } catch (_: Exception) {}
             isRecognizerListening = false
             textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
+
+            // Safety net: agar TTS 5 second mein khatam na ho, toh listening restart karo
+            handler.postDelayed({
+                if (isSpeaking) {
+                    android.util.Log.d("JARVIS_DEBUG", "TTS SAFETY NET triggered")
+                    isSpeaking = false
+                    if (isListeningActive) startListening()
+                }
+            }, 5000)
         }
     }
 
+    // =====================================================
+    // SPEECH RECOGNIZER
+    // =====================================================
     private fun setupRecognizer() {
         try { speechRecognizer.destroy() } catch (_: Exception) {}
 
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) return
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            return
+        }
 
         try {
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
             speechRecognizer.setRecognitionListener(this)
         } catch (e: Exception) {
+            android.util.Log.e("JARVIS_DEBUG", "CRASH in setupRecognizer: ${e.message}")
             return
         }
 
@@ -140,12 +168,17 @@ class AssistantService : Service(), RecognitionListener {
         }
     }
 
+    // =====================================================
+    // START LISTENING
+    // =====================================================
     private fun startListening() {
         if (!isListeningActive || isSpeaking || isRecognizerListening) return
 
         handler.post {
             if (!isListeningActive || isSpeaking || isRecognizerListening) return@post
-            try { speechRecognizer.cancel() } catch (_: Exception) {}
+            try {
+                speechRecognizer.cancel()
+            } catch (_: Exception) {}
 
             try {
                 wakeHandled = false
@@ -153,11 +186,15 @@ class AssistantService : Service(), RecognitionListener {
                 speechRecognizer.startListening(recognizerIntent)
             } catch (e: Exception) {
                 isRecognizerListening = false
+                android.util.Log.e("JARVIS_DEBUG", "CRASH in startListening: ${e.message}")
                 restartRecognizer()
             }
         }
     }
 
+    // =====================================================
+    // RESTART SPEECH RECOGNIZER
+    // =====================================================
     private fun restartRecognizer() {
         if (!isListeningActive || recognizerRestartPending) return
         recognizerRestartPending = true
@@ -173,21 +210,17 @@ class AssistantService : Service(), RecognitionListener {
                 speechRecognizer.startListening(recognizerIntent)
             } catch (e: Exception) {
                 isRecognizerListening = false
+                android.util.Log.e("JARVIS_DEBUG", "CRASH in restartRecognizer: ${e.message}")
                 handler.postDelayed({ startListening() }, 1000)
             }
         }, 800)
     }
 
+    // =====================================================
+    // FINAL RESULT (poora command yahan aata hai)
+    // =====================================================
     override fun onResults(results: Bundle?) {
         isRecognizerListening = false
-
-        if (wakeHandled) {
-            wakeHandled = false
-            if (isListeningActive && !isSpeaking) {
-                handler.postDelayed({ startListening() }, 300)
-            }
-            return
-        }
 
         val resultsList = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
         if (resultsList.isNullOrEmpty()) {
@@ -200,9 +233,16 @@ class AssistantService : Service(), RecognitionListener {
             startListening()
             return
         }
+
+        android.util.Log.d("JARVIS_DEBUG", "FULL RESULT: [$spokenText]")
+
+        wakeHandled = false
         handleSpeech(spokenText)
     }
 
+    // =====================================================
+    // PARTIAL RESULT (sirf wake word mark karo, mic band mat karo)
+    // =====================================================
     override fun onPartialResults(partialResults: Bundle?) {
         if (!isListeningActive || isSpeaking || isAwake || wakeHandled) return
 
@@ -212,24 +252,17 @@ class AssistantService : Service(), RecognitionListener {
         val spokenText = resultsList.firstOrNull()?.lowercase(Locale.US)?.trim() ?: ""
         if (!wakeWordDetector.containsWakeWord(spokenText)) return
 
+        // Sirf mark karo ki wake word mila. Mic BAND MAT KARO!
         wakeHandled = true
-        isRecognizerListening = false
-        try { speechRecognizer.stopListening() } catch (_: Exception) {}
-
-        val command = wakeWordDetector.removeWakeWord(spokenText)
-
-        if (command.isBlank()) {
-            isAwake = true
-            handler.removeCallbacks(wakeTimeout)
-            handler.postDelayed(wakeTimeout, 8000)
-            speak("Yes Sir", "WAKE_UP")
-        } else {
-            isAwake = false
-            executeVoiceCommand(command)
-        }
+        android.util.Log.d("JARVIS_DEBUG", "Wake word detected - waiting for full command")
     }
 
+    // =====================================================
+    // SPEECH HANDLER
+    // =====================================================
     private fun handleSpeech(text: String) {
+        android.util.Log.d("JARVIS_DEBUG", "handleSpeech: [$text]")
+
         if (isAwake) {
             isAwake = false
             handler.removeCallbacks(wakeTimeout)
@@ -252,52 +285,83 @@ class AssistantService : Service(), RecognitionListener {
         }
     }
 
+    // =====================================================
+    // COMMAND EXECUTOR (Smart Matching)
+    // =====================================================
     private fun executeVoiceCommand(command: String) {
         val cmd = command.lowercase(Locale.US).trim()
+        android.util.Log.d("JARVIS_CMD", "COMMAND RECEIVED: [$cmd]")
 
         when {
-            // FLASHLIGHT ON
-            cmd.contains("flashlight on") || cmd.contains("torch on") -> {
-                actionExecutor.toggleFlashlight(true)
-                speak("Flashlight turned on, Sir.", "FLASH_ON")
+            // ============ FLASHLIGHT ============
+            cmd.contains("flashlight") || cmd.contains("flash light") ||
+            cmd.contains("torch") || cmd.contains("light") -> {
+
+                if (cmd.contains("off") || cmd.contains("band") || cmd.contains("bujha") ||
+                    cmd.contains("turn off") || cmd.contains("switch off")) {
+                    actionExecutor.toggleFlashlight(false)
+                    speak("Flashlight turned off, Sir.", "FLASH_OFF")
+                } else if (cmd.contains("on") || cmd.contains("chalu") || cmd.contains("jala") ||
+                    cmd.contains("turn on") || cmd.contains("switch on")) {
+                    actionExecutor.toggleFlashlight(true)
+                    speak("Flashlight turned on, Sir.", "FLASH_ON")
+                } else {
+                    actionExecutor.toggleFlashlight(true)
+                    speak("Toggling flashlight, Sir.", "FLASH_TOGGLE")
+                }
             }
-            // FLASHLIGHT OFF
-            cmd.contains("flashlight off") || cmd.contains("torch off") -> {
-                actionExecutor.toggleFlashlight(false)
-                speak("Flashlight turned off, Sir.", "FLASH_OFF")
-            }
-            // TIME
+
+            // ============ TIME ============
             cmd.contains("time") -> {
                 val time = actionExecutor.getCurrentTime()
                 speak("The current time is $time, Sir.", "TIME")
             }
-            // DATE
-            cmd.contains("date") || cmd.contains("today") -> {
+
+            // ============ DATE ============
+            cmd.contains("date") || cmd.contains("today") || cmd.contains("tarikh") -> {
                 val date = actionExecutor.getCurrentDate()
                 speak("Today is $date, Sir.", "DATE")
             }
-            // BATTERY
-            cmd.contains("battery") -> {
+
+            // ============ BATTERY ============
+            cmd.contains("battery") || cmd.contains("charge") -> {
                 val level = actionExecutor.getBatteryLevel()
                 speak("Your battery is at $level percent, Sir.", "BATTERY")
             }
-            // CALL
-            cmd.startsWith("call ") -> {
-                val contactName = cmd.removePrefix("call ").trim()
-                val success = actionExecutor.callContact(contactName)
-                if (success) {
-                    speak("Calling $contactName, Sir.", "CALL")
+
+            // ============ CALL ============
+            cmd.contains("call") || cmd.contains("phone karo") || cmd.contains("dial") -> {
+                val contactName = cmd
+                    .replace("call", "")
+                    .replace("karo", "")
+                    .replace("phone", "")
+                    .replace("dial", "")
+                    .replace("please", "")
+                    .replace("to", "")
+                    .trim()
+
+                if (contactName.isNotBlank()) {
+                    val success = actionExecutor.callContact(contactName)
+                    if (success) {
+                        speak("Calling $contactName, Sir.", "CALL")
+                    } else {
+                        speak("I could not find that contact, Sir.", "CALL_ERROR")
+                    }
                 } else {
-                    speak("I could not find that contact, Sir.", "CALL_ERROR")
+                    speak("Who should I call, Sir?", "CALL_EMPTY")
                 }
             }
-            // YOUTUBE
-            cmd.contains("youtube") || cmd.contains("play") -> {
+
+            // ============ YOUTUBE ============
+            cmd.contains("youtube") || cmd.contains("play") || cmd.contains("gana") || cmd.contains("song") -> {
                 val query = cmd
                     .replace("play", "")
                     .replace("on youtube", "")
                     .replace("youtube", "")
                     .replace("song", "")
+                    .replace("gana", "")
+                    .replace("chalao", "")
+                    .replace("please", "")
                     .trim()
                 if (query.isNotBlank()) {
                     actionExecutor.playOnYoutube(query)
@@ -306,9 +370,15 @@ class AssistantService : Service(), RecognitionListener {
                     speak("What would you like me to play, Sir?", "YOUTUBE_EMPTY")
                 }
             }
-            // OPEN APP
-            cmd.startsWith("open ") -> {
-                val appName = cmd.removePrefix("open ").trim()
+
+            // ============ OPEN APP ============
+            cmd.startsWith("open ") || cmd.contains("kholo") || cmd.contains("launch") -> {
+                val appName = cmd
+                    .replace("open", "")
+                    .replace("kholo", "")
+                    .replace("launch", "")
+                    .replace("please", "")
+                    .trim()
                 val success = actionExecutor.openApp(appName)
                 if (success) {
                     speak("Opening $appName, Sir.", "OPEN_APP")
@@ -316,13 +386,17 @@ class AssistantService : Service(), RecognitionListener {
                     speak("I could not find that app, Sir.", "APP_ERROR")
                 }
             }
-            // UNKNOWN
+
+            // ============ UNKNOWN ============
             else -> {
                 speak("I am not sure how to do that yet, Sir.", "UNKNOWN")
             }
         }
     }
 
+    // =====================================================
+    // NOTIFICATION
+    // =====================================================
     private fun createNotification() {
         val channelId = "jarvis_channel"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -342,8 +416,12 @@ class AssistantService : Service(), RecognitionListener {
         startForeground(1, notification)
     }
 
+    // =====================================================
+    // RECOGNITION LISTENER
+    // =====================================================
     override fun onError(error: Int) {
         isRecognizerListening = false
+        android.util.Log.e("JARVIS_DEBUG", "Speech Error Code: $error")
         if (isListeningActive && !isSpeaking) {
             val delayMs = when (error) {
                 SpeechRecognizer.ERROR_NO_MATCH -> 300L
@@ -361,13 +439,17 @@ class AssistantService : Service(), RecognitionListener {
     override fun onBufferReceived(buffer: ByteArray?) {}
     override fun onEndOfSpeech() {}
     override fun onEvent(eventType: Int, params: Bundle?) {}
+
+    // =====================================================
+    // DESTROY
+    // =====================================================
     override fun onDestroy() {
-    super.onDestroy()
-    isListeningActive = false
-    handler.removeCallbacksAndMessages(null)
-    try { speechRecognizer.destroy() } catch (_: Exception) {}
-    try { textToSpeech.stop() } catch (_: Exception) {}
-    try { textToSpeech.shutdown() } catch (_: Exception) {}
-    android.util.Log.d("JARVIS_DEBUG", "Service Destroyed - Mic turned off")
+        super.onDestroy()
+        isListeningActive = false
+        handler.removeCallbacksAndMessages(null)
+        try { speechRecognizer.destroy() } catch (_: Exception) {}
+        try { textToSpeech.stop() } catch (_: Exception) {}
+        try { textToSpeech.shutdown() } catch (_: Exception) {}
+        android.util.Log.d("JARVIS_DEBUG", "Service Destroyed - Mic turned off")
     }
 }
