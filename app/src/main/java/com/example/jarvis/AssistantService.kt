@@ -419,7 +419,7 @@ class AssistantService : Service(), RecognitionListener {
         val url = "https://api.groq.com/openai/v1/chat/completions"
 
         val requestBody = JSONObject().apply {
-            put("model", "llama-3.3-70b-versatile")
+            put("model", "llama-3.1-8b-instant")
             put("messages", JSONArray().apply {
                 put(JSONObject().apply {
                     put("role", "system")
