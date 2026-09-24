@@ -25,6 +25,7 @@ jobs:
       - name: Build debug APK
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: gradle assembleDebug
 
       - name: Upload APK as artifact
