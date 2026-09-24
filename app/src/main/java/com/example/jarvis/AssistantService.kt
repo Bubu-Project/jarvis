@@ -18,8 +18,13 @@ import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.core.app.NotificationCompat
+import com.android.volley.AuthFailureError
+import com.android.volley.Request
 import com.android.volley.RequestQueue
+import com.android.volley.toolbox.JsonObjectRequest
 import com.android.volley.toolbox.Volley
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.Locale
 
 class AssistantService : Service(), RecognitionListener {
@@ -46,6 +51,7 @@ class AssistantService : Service(), RecognitionListener {
     private var ttsReady = false
     private var wakeHandled = false
     private var recognizerRestartPending = false
+    private var pauseListeningUntil: Long = 0L
 
     private val wakeTimeout = Runnable {
         isAwake = false
@@ -74,15 +80,16 @@ class AssistantService : Service(), RecognitionListener {
     }
 
     // =====================================================
-    // TTS
+    // TTS - Hinglish Friendly (en-IN)
     // =====================================================
     private fun setupTTS() {
         textToSpeech = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                val result = textToSpeech.setLanguage(Locale.US)
+                val result = textToSpeech.setLanguage(Locale("en", "IN"))
                 ttsReady = result != TextToSpeech.LANG_MISSING_DATA &&
                         result != TextToSpeech.LANG_NOT_SUPPORTED
                 textToSpeech.setSpeechRate(1.0f)
+                textToSpeech.setPitch(1.0f)
                 setupTTSListener()
             }
         }
@@ -129,14 +136,14 @@ class AssistantService : Service(), RecognitionListener {
             isRecognizerListening = false
             textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
 
-            // Safety net: agar TTS 5 second mein khatam na ho, toh listening restart karo
+            // Safety net
             handler.postDelayed({
                 if (isSpeaking) {
                     android.util.Log.d("JARVIS_DEBUG", "TTS SAFETY NET triggered")
                     isSpeaking = false
                     if (isListeningActive) startListening()
                 }
-            }, 5000)
+            }, 7000)
         }
     }
 
@@ -160,6 +167,9 @@ class AssistantService : Service(), RecognitionListener {
 
         recognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-IN")
+            putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, "en-IN")
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 200L)
@@ -172,6 +182,12 @@ class AssistantService : Service(), RecognitionListener {
     // START LISTENING
     // =====================================================
     private fun startListening() {
+        // Agar media cooldown chal raha hai, toh mic on mat karo
+        if (System.currentTimeMillis() < pauseListeningUntil) {
+            handler.postDelayed({ if (isListeningActive) startListening() }, 5000)
+            return
+        }
+
         if (!isListeningActive || isSpeaking || isRecognizerListening) return
 
         handler.post {
@@ -217,7 +233,7 @@ class AssistantService : Service(), RecognitionListener {
     }
 
     // =====================================================
-    // FINAL RESULT (poora command yahan aata hai)
+    // FINAL RESULT
     // =====================================================
     override fun onResults(results: Bundle?) {
         isRecognizerListening = false
@@ -241,7 +257,7 @@ class AssistantService : Service(), RecognitionListener {
     }
 
     // =====================================================
-    // PARTIAL RESULT (sirf wake word mark karo, mic band mat karo)
+    // PARTIAL RESULT - Sirf mark karo
     // =====================================================
     override fun onPartialResults(partialResults: Bundle?) {
         if (!isListeningActive || isSpeaking || isAwake || wakeHandled) return
@@ -252,9 +268,8 @@ class AssistantService : Service(), RecognitionListener {
         val spokenText = resultsList.firstOrNull()?.lowercase(Locale.US)?.trim() ?: ""
         if (!wakeWordDetector.containsWakeWord(spokenText)) return
 
-        // Sirf mark karo ki wake word mila. Mic BAND MAT KARO!
         wakeHandled = true
-        android.util.Log.d("JARVIS_DEBUG", "Wake word detected - waiting for full command")
+        android.util.Log.d("JARVIS_DEBUG", "Wake word spotted in partial")
     }
 
     // =====================================================
@@ -286,7 +301,7 @@ class AssistantService : Service(), RecognitionListener {
     }
 
     // =====================================================
-    // COMMAND EXECUTOR (Smart Matching)
+    // COMMAND EXECUTOR
     // =====================================================
     private fun executeVoiceCommand(command: String) {
         val cmd = command.lowercase(Locale.US).trim()
@@ -295,7 +310,7 @@ class AssistantService : Service(), RecognitionListener {
         when {
             // ============ FLASHLIGHT ============
             cmd.contains("flashlight") || cmd.contains("flash light") ||
-            cmd.contains("torch") || cmd.contains("light") -> {
+            cmd.contains("torch") -> {
 
                 if (cmd.contains("off") || cmd.contains("band") || cmd.contains("bujha") ||
                     cmd.contains("turn off") || cmd.contains("switch off")) {
@@ -312,21 +327,21 @@ class AssistantService : Service(), RecognitionListener {
             }
 
             // ============ TIME ============
-            cmd.contains("time") -> {
+            cmd.contains("time") || cmd.contains("samay") -> {
                 val time = actionExecutor.getCurrentTime()
-                speak("The current time is $time, Sir.", "TIME")
+                speak("Sir, abhi $time ho raha hai.", "TIME")
             }
 
             // ============ DATE ============
             cmd.contains("date") || cmd.contains("today") || cmd.contains("tarikh") -> {
                 val date = actionExecutor.getCurrentDate()
-                speak("Today is $date, Sir.", "DATE")
+                speak("Sir, aaj $date hai.", "DATE")
             }
 
             // ============ BATTERY ============
             cmd.contains("battery") || cmd.contains("charge") -> {
                 val level = actionExecutor.getBatteryLevel()
-                speak("Your battery is at $level percent, Sir.", "BATTERY")
+                speak("Sir, aapki battery $level percent hai.", "BATTERY")
             }
 
             // ============ CALL ============
@@ -345,11 +360,12 @@ class AssistantService : Service(), RecognitionListener {
                     if (success) {
                         speak("Calling $contactName, Sir.", "CALL")
                     } else {
-                        speak("I could not find that contact, Sir.", "CALL_ERROR")
+                        speak("Sir, $contactName naam ka contact nahi mila.", "CALL_ERROR")
                     }
                 } else {
-                    speak("Who should I call, Sir?", "CALL_EMPTY")
+                    speak("Sir, kisko call karna hai?", "CALL_EMPTY")
                 }
+                pauseListeningUntil = System.currentTimeMillis() + 30000
             }
 
             // ============ YOUTUBE ============
@@ -367,8 +383,9 @@ class AssistantService : Service(), RecognitionListener {
                     actionExecutor.playOnYoutube(query)
                     speak("Playing $query on YouTube, Sir.", "YOUTUBE")
                 } else {
-                    speak("What would you like me to play, Sir?", "YOUTUBE_EMPTY")
+                    speak("Sir, kya play karna hai?", "YOUTUBE_EMPTY")
                 }
+                pauseListeningUntil = System.currentTimeMillis() + 120000
             }
 
             // ============ OPEN APP ============
@@ -383,15 +400,85 @@ class AssistantService : Service(), RecognitionListener {
                 if (success) {
                     speak("Opening $appName, Sir.", "OPEN_APP")
                 } else {
-                    speak("I could not find that app, Sir.", "APP_ERROR")
+                    speak("Sir, $appName app nahi mili.", "APP_ERROR")
                 }
             }
 
-            // ============ UNKNOWN ============
+            // ============ UNKNOWN - AI SE POOCHO ============
             else -> {
-                speak("I am not sure how to do that yet, Sir.", "UNKNOWN")
+                android.util.Log.d("JARVIS_CMD", "Sending to AI: [$cmd]")
+                askGroqAI(cmd)
             }
         }
+    }
+
+    // =====================================================
+    // GROQ AI - HINGLISH MODE
+    // =====================================================
+    private fun askGroqAI(question: String) {
+        val url = "https://api.groq.com/openai/v1/chat/completions"
+
+        val requestBody = JSONObject().apply {
+            put("model", "llama-3.3-70b-versatile")
+            put("messages", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("role", "system")
+                    put("content", "You are Jarvis, a smart and friendly AI assistant for an Indian user. " +
+                            "RULES: " +
+                            "1. Always reply in HINGLISH (Hindi + English mixed) using ROMAN script only. " +
+                            "2. Example: 'Sir, aapka din bahut accha jayega. Kya main aapki koi aur madad kar sakta hoon?' " +
+                            "3. Address the user as 'Sir' always. " +
+                            "4. Keep replies SHORT - max 2-3 sentences. " +
+                            "5. Be witty, warm, and helpful like a real friend. " +
+                            "6. NEVER use Devanagari (हिंदी) script - only Roman letters. " +
+                            "7. If user speaks English, reply mostly in English. If Hindi, reply in Hinglish. " +
+                            "8. No markdown, no bullet points, no special symbols - just plain speech.")
+                })
+                put(JSONObject().apply {
+                    put("role", "user")
+                    put("content", question)
+                })
+            })
+            put("temperature", 0.7)
+            put("max_tokens", 200)
+        }
+
+        val request = object : JsonObjectRequest(
+            Request.Method.POST,
+            url,
+            requestBody,
+            { response ->
+                try {
+                    val aiReply = response
+                        .getJSONArray("choices")
+                        .getJSONObject(0)
+                        .getJSONObject("message")
+                        .getString("content")
+                        .trim()
+
+                    android.util.Log.d("JARVIS_AI", "AI Reply: $aiReply")
+                    speak(aiReply, "AI_REPLY")
+
+                } catch (e: Exception) {
+                    android.util.Log.e("JARVIS_AI", "Parse error: ${e.message}")
+                    speak("Sorry Sir, samajh nahi paya.", "AI_ERROR")
+                }
+            },
+            { error ->
+                android.util.Log.e("JARVIS_AI", "API error: ${error.message}")
+                speak("Sorry Sir, network problem hai.", "AI_NETWORK_ERROR")
+            }
+        ) {
+            @Throws(AuthFailureError::class)
+            override fun getHeaders(): MutableMap<String, String> {
+                val headers = HashMap<String, String>()
+                headers["Authorization"] = "Bearer $LLAMA_API_KEY"
+                headers["Content-Type"] = "application/json"
+                return headers
+            }
+        }
+
+        requestQueue.add(request)
     }
 
     // =====================================================
