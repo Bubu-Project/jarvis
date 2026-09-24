@@ -40,7 +40,7 @@ class AssistantService : Service(), RecognitionListener {
     // =====================================================
     // GROQ API KEY
     // =====================================================
-    private val LLAMA_API_KEY = "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"
+    private val LLAMA_API_KEY = BuildConfig.GROQ_API_KEY
 
     private val handler = Handler(Looper.getMainLooper())
 
