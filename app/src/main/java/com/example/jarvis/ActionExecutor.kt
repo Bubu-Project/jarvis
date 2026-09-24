@@ -31,7 +31,6 @@ class ActionExecutor(private val context: Context) {
         return true
     }
 
-    // ✅ FIXED: Permission check + Dialer fallback
     fun callContact(name: String): Boolean {
         val phoneNumber = lookupContactNumber(name) ?: return false
 
@@ -42,7 +41,6 @@ class ActionExecutor(private val context: Context) {
         val intent = if (hasCallPermission) {
             Intent(Intent.ACTION_CALL)
         } else {
-            // Agar permission nahi hai, toh dialer khol do (number ready hoga)
             Intent(Intent.ACTION_DIAL)
         }.apply {
             data = Uri.parse("tel:$phoneNumber")
@@ -69,9 +67,7 @@ class ActionExecutor(private val context: Context) {
         }
     }
 
-    // ✅ FIXED: Better YouTube intent + browser fallback
     fun playOnYoutube(query: String) {
-        // Pehle try karo YouTube app se search karne ki
         val youtubeIntent = Intent(Intent.ACTION_SEARCH).apply {
             setPackage("com.google.android.youtube")
             putExtra("query", query)
@@ -81,7 +77,6 @@ class ActionExecutor(private val context: Context) {
         try {
             context.startActivity(youtubeIntent)
         } catch (e: Exception) {
-            // Agar YouTube app search intent support nahi karta, toh URL se kholo
             try {
                 val urlIntent = Intent(Intent.ACTION_VIEW).apply {
                     data = Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(query)}")
@@ -90,7 +85,6 @@ class ActionExecutor(private val context: Context) {
                 }
                 context.startActivity(urlIntent)
             } catch (e2: Exception) {
-                // Agar YouTube app hi nahi hai, toh browser mein kholo
                 val browserIntent = Intent(Intent.ACTION_VIEW).apply {
                     data = Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(query)}")
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -110,7 +104,6 @@ class ActionExecutor(private val context: Context) {
         }
     }
 
-    // ✅ NAYA: Time aur Date batane ke liye
     fun getCurrentTime(): String {
         val formatter = SimpleDateFormat("hh:mm a", Locale.US)
         return formatter.format(Date())
@@ -121,7 +114,6 @@ class ActionExecutor(private val context: Context) {
         return formatter.format(Date())
     }
 
-    // ✅ NAYA: Battery status batane ke liye
     fun getBatteryLevel(): Int {
         val bm = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
         return bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
