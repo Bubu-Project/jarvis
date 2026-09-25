@@ -112,35 +112,54 @@ private fun setupTTS() {
 
                     // Best Indian female voice select karo
                     try {
-                        val voices = textToSpeech.voices
-                        if (voices != null) {
-                            val femaleVoice = voices
-                                .filter { it.locale.language == "en" }
-                                .sortedByDescending { v ->
-                                    var score = 0
-                                    if (v.locale.country == "IN") score += 100
-                                    if (v.locale.country == "GB") score += 50
-                                    if (v.locale.country == "US") score += 30
-                                    if (v.name.contains("female", true)) score += 50
-                                    if (v.name.contains("-f-", true)) score += 40
-                                    if (v.name.contains("samantha", true)) score += 30
-                                    if (v.name.contains("victoria", true)) score += 30
-                                    if (v.name.contains("karen", true)) score += 30
-                                    if (v.name.contains("moira", true)) score += 30
-                                    if (v.name.contains("tessa", true)) score += 30
-                                    if (v.name.contains("veena", true)) score += 40
-                                    if (v.name.contains("raveena", true)) score += 40
-                                    if (v.name.contains("heera", true)) score += 40
-                                    if (v.name.contains("priya", true)) score += 40
-                                    score
-                                }
-                                .firstOrNull()
-
-                            if (femaleVoice != null) {
-                                textToSpeech.voice = femaleVoice
-                                android.util.Log.d("JARVIS_TTS", "Voice: ${femaleVoice.name} (${femaleVoice.locale})")
-                            }
-                        }
+    val voices = textToSpeech.voices
+    if (voices != null) {
+        // Sirf female voices - male ko pehle hi filter out karo
+        val femaleVoiceNames = listOf(
+            "female", "-f-", "samantha", "victoria", "karen",
+            "moira", "tessa", "veena", "raveena", "heera",
+            "priya", "fiona", "susan", "allison", "ava",
+            "amelie", "joanna", "salli", "kendra", "kimberly"
+        )
+        
+        val maleVoiceNames = listOf(
+            "male", "-m-", "daniel", "alex", "fred",
+            "rishi", "ravi", "oliver", "thomas", "james"
+        )
+        
+        // Female voices ko filter karo
+        val femaleVoices = voices.filter { v ->
+            v.locale.language == "en" &&
+            femaleVoiceNames.any { v.name.contains(it, true) } &&
+            maleVoiceNames.none { v.name.contains(it, true) }
+        }
+        
+        if (femaleVoices.isNotEmpty()) {
+            // Best female voice choose karo
+            val bestVoice = femaleVoices.sortedByDescending { v ->
+                var score = 0
+                if (v.locale.country == "IN") score += 100
+                if (v.locale.country == "GB") score += 50
+                if (v.locale.country == "US") score += 30
+                if (v.name.contains("female", true)) score += 20
+                if (v.name.contains("veena", true)) score += 40
+                if (v.name.contains("raveena", true)) score += 40
+                if (v.name.contains("heera", true)) score += 40
+                if (v.name.contains("priya", true)) score += 40
+                score
+            }.first()
+            
+            textToSpeech.voice = bestVoice
+            android.util.Log.d("JARVIS_TTS", "Female voice set: ${bestVoice.name}")
+        } else {
+            android.util.Log.e("JARVIS_TTS", "No female voice found!")
+            // Pitch high karke female jaisa banao
+            textToSpeech.setPitch(1.35f)
+        }
+    }
+} catch (e: Exception) {
+    android.util.Log.e("JARVIS_TTS", "Voice error: ${e.message}")
+}
                     } catch (e: Exception) {
                         android.util.Log.e("JARVIS_TTS", "Voice error: ${e.message}")
                     }
