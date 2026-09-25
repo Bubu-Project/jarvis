@@ -37,9 +37,6 @@ class AssistantService : Service(), RecognitionListener {
     private lateinit var requestQueue: RequestQueue
     private val wakeWordDetector = WakeWordDetector()
 
-    // =====================================================
-    // GROQ API KEY
-    // =====================================================
     private val LLAMA_API_KEY = BuildConfig.GROQ_API_KEY
 
     private val handler = Handler(Looper.getMainLooper())
@@ -54,6 +51,9 @@ class AssistantService : Service(), RecognitionListener {
     private var pauseListeningUntil: Long = 0L
     private var isConversationMode = false
     private var conversationTimeout: Runnable? = null
+    private var isWaitingForCallResponse = false
+    private var pendingCallName: String? = null
+
     private val wakeTimeout = Runnable {
         isAwake = false
         wakeHandled = false
@@ -62,37 +62,75 @@ class AssistantService : Service(), RecognitionListener {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // =====================================================
-    // CREATE SERVICE
-    // =====================================================
     override fun onCreate() {
         super.onCreate()
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            android.util.Log.e("JARVIS_DEBUG", "Speech recognition is NOT available")
+        try {
+            android.util.Log.d("JARVIS_DEBUG", "Service onCreate started")
+
+            audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            actionExecutor = ActionExecutor(this)
+            requestQueue = Volley.newRequestQueue(this)
+            createNotification()
+            setupTTS()
+            setupRecognizer()
+            setupCallReceiver()
+            isListeningActive = true
+            handler.postDelayed({ startListening() }, 3000)
+
+            android.util.Log.d("JARVIS_DEBUG", "Service onCreate completed")
+        } catch (e: Exception) {
+            android.util.Log.e("JARVIS_DEBUG", "CRASH in onCreate: ${e.message}")
+            e.printStackTrace()
         }
-        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        actionExecutor = ActionExecutor(this)
-        requestQueue = Volley.newRequestQueue(this)
-        createNotification()
-        setupTTS()
-        setupRecognizer()
-        isListeningActive = true
-        handler.postDelayed({ startListening() }, 3000)
     }
 
     // =====================================================
-    // TTS - Hinglish Friendly (en-IN)
+    // TTS - Girl Voice (GF Jaisi)
     // =====================================================
     private fun setupTTS() {
-        textToSpeech = TextToSpeech(this) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                val result = textToSpeech.setLanguage(Locale("en", "IN"))
-                ttsReady = result != TextToSpeech.LANG_MISSING_DATA &&
-                        result != TextToSpeech.LANG_NOT_SUPPORTED
-                textToSpeech.setSpeechRate(1.0f)
-                textToSpeech.setPitch(1.0f)
-                setupTTSListener()
+        try {
+            textToSpeech = TextToSpeech(this) { status ->
+                if (status == TextToSpeech.SUCCESS) {
+                    try {
+                        val result = textToSpeech.setLanguage(Locale("en", "IN"))
+                        ttsReady = result != TextToSpeech.LANG_MISSING_DATA &&
+                                result != TextToSpeech.LANG_NOT_SUPPORTED
+
+                        textToSpeech.setSpeechRate(0.95f)
+                        textToSpeech.setPitch(1.25f)
+
+                        try {
+                            val voices = textToSpeech.voices
+                            if (voices != null) {
+                                val femaleVoice = voices.firstOrNull { voice ->
+                                    voice.locale.language == "en" &&
+                                    (voice.name.contains("female", true) ||
+                                     voice.name.contains("-f-", true) ||
+                                     voice.name.contains("samantha", true) ||
+                                     voice.name.contains("victoria", true) ||
+                                     voice.name.contains("karen", true) ||
+                                     voice.name.contains("moira", true) ||
+                                     voice.name.contains("tessa", true) ||
+                                     voice.name.contains("veena", true) ||
+                                     voice.name.contains("raveena", true))
+                                }
+                                if (femaleVoice != null) {
+                                    textToSpeech.voice = femaleVoice
+                                    android.util.Log.d("JARVIS_TTS", "Female voice: ${femaleVoice.name}")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.e("JARVIS_TTS", "Voice error: ${e.message}")
+                        }
+
+                        setupTTSListener()
+                    } catch (e: Exception) {
+                        android.util.Log.e("JARVIS_TTS", "TTS setup error: ${e.message}")
+                    }
+                }
             }
+        } catch (e: Exception) {
+            android.util.Log.e("JARVIS_TTS", "TTS init error: ${e.message}")
         }
     }
 
@@ -109,10 +147,9 @@ class AssistantService : Service(), RecognitionListener {
 
                 override fun onDone(utteranceId: String?) {
                     handler.post {
-                        android.util.Log.d("JARVIS_DEBUG", "TTS DONE - restarting listen")
                         isSpeaking = false
-                        if (isListeningActive) {
-                            handler.postDelayed({ startListening() }, 1200)
+                        if (isListeningActive && System.currentTimeMillis() >= pauseListeningUntil) {
+                            handler.postDelayed({ startListening() }, 1000)
                         }
                     }
                 }
@@ -120,8 +157,8 @@ class AssistantService : Service(), RecognitionListener {
                 override fun onError(utteranceId: String?) {
                     handler.post {
                         isSpeaking = false
-                        if (isListeningActive) {
-                            handler.postDelayed({ startListening() }, 1200)
+                        if (isListeningActive && System.currentTimeMillis() >= pauseListeningUntil) {
+                            handler.postDelayed({ startListening() }, 1000)
                         }
                     }
                 }
@@ -137,10 +174,8 @@ class AssistantService : Service(), RecognitionListener {
             isRecognizerListening = false
             textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
 
-            // Safety net
             handler.postDelayed({
                 if (isSpeaking) {
-                    android.util.Log.d("JARVIS_DEBUG", "TTS SAFETY NET triggered")
                     isSpeaking = false
                     if (isListeningActive) startListening()
                 }
@@ -154,15 +189,13 @@ class AssistantService : Service(), RecognitionListener {
     private fun setupRecognizer() {
         try { speechRecognizer.destroy() } catch (_: Exception) {}
 
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            return
-        }
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) return
 
         try {
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
             speechRecognizer.setRecognitionListener(this)
         } catch (e: Exception) {
-            android.util.Log.e("JARVIS_DEBUG", "CRASH in setupRecognizer: ${e.message}")
+            android.util.Log.e("JARVIS_DEBUG", "setupRecognizer error: ${e.message}")
             return
         }
 
@@ -179,11 +212,7 @@ class AssistantService : Service(), RecognitionListener {
         }
     }
 
-    // =====================================================
-    // START LISTENING
-    // =====================================================
     private fun startListening() {
-        // Agar media cooldown chal raha hai, toh mic on mat karo
         if (System.currentTimeMillis() < pauseListeningUntil) {
             handler.postDelayed({ if (isListeningActive) startListening() }, 5000)
             return
@@ -203,15 +232,12 @@ class AssistantService : Service(), RecognitionListener {
                 speechRecognizer.startListening(recognizerIntent)
             } catch (e: Exception) {
                 isRecognizerListening = false
-                android.util.Log.e("JARVIS_DEBUG", "CRASH in startListening: ${e.message}")
+                android.util.Log.e("JARVIS_DEBUG", "startListening error: ${e.message}")
                 restartRecognizer()
             }
         }
     }
 
-    // =====================================================
-    // RESTART SPEECH RECOGNIZER
-    // =====================================================
     private fun restartRecognizer() {
         if (!isListeningActive || recognizerRestartPending) return
         recognizerRestartPending = true
@@ -227,15 +253,11 @@ class AssistantService : Service(), RecognitionListener {
                 speechRecognizer.startListening(recognizerIntent)
             } catch (e: Exception) {
                 isRecognizerListening = false
-                android.util.Log.e("JARVIS_DEBUG", "CRASH in restartRecognizer: ${e.message}")
                 handler.postDelayed({ startListening() }, 1000)
             }
         }, 800)
     }
 
-    // =====================================================
-    // FINAL RESULT
-    // =====================================================
     override fun onResults(results: Bundle?) {
         isRecognizerListening = false
 
@@ -252,14 +274,10 @@ class AssistantService : Service(), RecognitionListener {
         }
 
         android.util.Log.d("JARVIS_DEBUG", "FULL RESULT: [$spokenText]")
-
         wakeHandled = false
         handleSpeech(spokenText)
     }
 
-    // =====================================================
-    // PARTIAL RESULT - Sirf mark karo
-    // =====================================================
     override fun onPartialResults(partialResults: Bundle?) {
         if (!isListeningActive || isSpeaking || isAwake || wakeHandled) return
 
@@ -270,259 +288,334 @@ class AssistantService : Service(), RecognitionListener {
         if (!wakeWordDetector.containsWakeWord(spokenText)) return
 
         wakeHandled = true
-        android.util.Log.d("JARVIS_DEBUG", "Wake word spotted in partial")
+        android.util.Log.d("JARVIS_DEBUG", "Wake word in partial")
     }
 
     // =====================================================
-    // SPEECH HANDLER
+    // SPEECH HANDLER (Conversation Mode)
     // =====================================================
     private fun handleSpeech(text: String) {
-    android.util.Log.d("JARVIS_DEBUG", "handleSpeech: [$text]")
+        android.util.Log.d("JARVIS_DEBUG", "handleSpeech: [$text]")
 
-    // Conversation mode active hai
-    if (isConversationMode) {
-        val exitWords = listOf(
-            "stop", "band karo", "shut down", "goodbye", "bye",
-            "chup", "chup ho jao", "bas", "ruko", "mat suno",
-            "conversation band", "exit", "quit", "end conversation"
-        )
-        
-        val lowerText = text.lowercase().trim()
-        if (exitWords.any { lowerText.contains(it) }) {
-            isConversationMode = false
-            conversationTimeout?.let { handler.removeCallbacks(it) }
-            speak("Theek hai Sir, main chup ho jaati hoon.", "CONVERSATION_END")
+        if (isConversationMode) {
+            val exitWords = listOf(
+                "stop", "band karo", "shut down", "goodbye", "bye",
+                "chup", "chup ho jao", "bas", "ruko", "mat suno",
+                "conversation band", "exit", "quit", "end conversation"
+            )
+
+            val lowerText = text.lowercase().trim()
+            if (exitWords.any { lowerText.contains(it) }) {
+                isConversationMode = false
+                conversationTimeout?.let { handler.removeCallbacks(it) }
+                speak("Theek hai Sir, main chup ho jaati hoon.", "CONVERSATION_END")
+                return
+            }
+
+            resetConversationTimeout()
+            executeVoiceCommand(text)
             return
         }
 
-        resetConversationTimeout()
-        executeVoiceCommand(text)
-        return
-    }
-
-    // Normal mode
-    if (isAwake) {
-        isAwake = false
-        handler.removeCallbacks(wakeTimeout)
-        isConversationMode = true
-        resetConversationTimeout()
-        executeVoiceCommand(text)
-        return
-    }
-
-    if (wakeWordDetector.containsWakeWord(text)) {
-        val command = wakeWordDetector.removeWakeWord(text)
-        if (command.isBlank()) {
-            isConversationMode = true
-            isAwake = true
+        if (isAwake) {
+            isAwake = false
             handler.removeCallbacks(wakeTimeout)
-            handler.postDelayed(wakeTimeout, 10000)
-            resetConversationTimeout()
-            speak("Haan Sir, boliye. Main sun rahi hoon.", "WAKE_UP")
-        } else {
             isConversationMode = true
             resetConversationTimeout()
-            executeVoiceCommand(command)
+            executeVoiceCommand(text)
+            return
         }
-    } else {
-        startListening()
-    }
-}
-private fun resetConversationTimeout() {
-    conversationTimeout?.let { handler.removeCallbacks(it) }
 
-    val timeout = Runnable {
-        if (isConversationMode) {
-            isConversationMode = false
-            android.util.Log.d("JARVIS_CONV", "Conversation timeout - back to wake word")
+        if (wakeWordDetector.containsWakeWord(text)) {
+            val command = wakeWordDetector.removeWakeWord(text)
+            if (command.isBlank()) {
+                isConversationMode = true
+                isAwake = true
+                handler.removeCallbacks(wakeTimeout)
+                handler.postDelayed(wakeTimeout, 10000)
+                resetConversationTimeout()
+                speak("Haan Sir, boliye. Main sun rahi hoon.", "WAKE_UP")
+            } else {
+                isConversationMode = true
+                resetConversationTimeout()
+                executeVoiceCommand(command)
+            }
+        } else {
+            startListening()
         }
     }
-    conversationTimeout = timeout
-    handler.postDelayed(timeout, 60000)
-}
+
+    private fun resetConversationTimeout() {
+        try {
+            conversationTimeout?.let { handler.removeCallbacks(it) }
+
+            val timeout = Runnable {
+                if (isConversationMode) {
+                    isConversationMode = false
+                    android.util.Log.d("JARVIS_CONV", "Timeout - wake word mode")
+                }
+            }
+            conversationTimeout = timeout
+            handler.postDelayed(timeout, 60000)
+        } catch (e: Exception) {
+            android.util.Log.e("JARVIS_CONV", "Timeout error: ${e.message}")
+        }
+    }
+
+    // =====================================================
+    // CALL HANDLING
+    // =====================================================
+    private fun setupCallReceiver() {
+        try {
+            val receiver = CallReceiver()
+            CallReceiver.instance = receiver
+
+            receiver.setListener { state, number ->
+                handler.post {
+                    when (state) {
+                        android.telephony.TelephonyManager.CALL_STATE_RINGING -> {
+                            handleIncomingCall(number)
+                        }
+                        android.telephony.TelephonyManager.CALL_STATE_IDLE -> {
+                            if (isWaitingForCallResponse) {
+                                isWaitingForCallResponse = false
+                                pendingCallName = null
+                            }
+                        }
+                    }
+                }
+            }
+
+            val filter = android.content.IntentFilter(
+                android.telephony.TelephonyManager.ACTION_PHONE_STATE_CHANGED
+            )
+            registerReceiver(receiver, filter)
+            android.util.Log.d("JARVIS_CALL", "CallReceiver registered")
+        } catch (e: Exception) {
+            android.util.Log.e("JARVIS_CALL", "Receiver setup failed: ${e.message}")
+        }
+    }
+
+    private fun handleIncomingCall(number: String?) {
+        if (number.isNullOrBlank()) return
+
+        val isSpam = actionExecutor.isSpamNumber(number)
+        if (isSpam) {
+            android.util.Log.d("JARVIS_CALL", "Spam: $number")
+            speak("Sir, spam call aa raha hai. Reject kar rahi hoon.", "SPAM_CALL")
+            handler.postDelayed({ actionExecutor.rejectCall() }, 3500)
+            return
+        }
+
+        val contactName = actionExecutor.getContactName(number)
+        pendingCallName = contactName
+        isWaitingForCallResponse = true
+
+        val announcement = if (contactName != null) {
+            "Sir, $contactName ka call aa raha hai. Uthau?"
+        } else {
+            "Sir, ek unknown number se call aa raha hai. Uthau?"
+        }
+
+        speak(announcement, "INCOMING_CALL")
+
+        handler.postDelayed({
+            if (isWaitingForCallResponse) {
+                isWaitingForCallResponse = false
+                pendingCallName = null
+                android.util.Log.d("JARVIS_CALL", "Call response timeout")
+            }
+        }, 15000)
+    }
+
     // =====================================================
     // COMMAND EXECUTOR
     // =====================================================
     private fun executeVoiceCommand(command: String) {
         val cmd = command.lowercase(Locale.US).trim()
-        android.util.Log.d("JARVIS_CMD", "COMMAND RECEIVED: [$cmd]")
+        android.util.Log.d("JARVIS_CMD", "COMMAND: [$cmd]")
 
         when {
-            // ============ FLASHLIGHT ============
-            cmd.contains("flashlight") || cmd.contains("flash light") ||
-            cmd.contains("torch") -> {
+            // CALL ANSWER
+            isWaitingForCallResponse && (
+                cmd.contains("haan") || cmd.contains("yes") || cmd.contains("uthao") ||
+                cmd.contains("utha") || cmd.contains("answer") || cmd.contains("pick") ||
+                cmd.contains("lo") || cmd.contains("attend") || cmd.contains("le lo")
+            ) -> {
+                isWaitingForCallResponse = false
+                actionExecutor.answerCall()
+                speak("Call utha rahi hoon, Sir.", "CALL_ANSWERED")
+                pendingCallName = null
+            }
 
-                if (cmd.contains("off") || cmd.contains("band") || cmd.contains("bujha") ||
-                    cmd.contains("turn off") || cmd.contains("switch off")) {
+            // CALL REJECT
+            isWaitingForCallResponse && (
+                cmd.contains("nahi") || cmd.contains("no") || cmd.contains("reject") ||
+                cmd.contains("kato") || cmd.contains("kat") || cmd.contains("cut") ||
+                cmd.contains("band") || cmd.contains("mat") || cmd.contains("chhod")
+            ) -> {
+                isWaitingForCallResponse = false
+                actionExecutor.rejectCall()
+                speak("Call reject kar diya, Sir.", "CALL_REJECTED")
+                pendingCallName = null
+            }
+
+            // FLASHLIGHT
+            cmd.contains("flashlight") || cmd.contains("flash light") || cmd.contains("torch") -> {
+                if (cmd.contains("off") || cmd.contains("band") || cmd.contains("bujha")) {
                     actionExecutor.toggleFlashlight(false)
-                    speak("Flashlight turned off, Sir.", "FLASH_OFF")
-                } else if (cmd.contains("on") || cmd.contains("chalu") || cmd.contains("jala") ||
-                    cmd.contains("turn on") || cmd.contains("switch on")) {
-                    actionExecutor.toggleFlashlight(true)
-                    speak("Flashlight turned on, Sir.", "FLASH_ON")
+                    speak("Flashlight off, Sir.", "FLASH_OFF")
                 } else {
                     actionExecutor.toggleFlashlight(true)
-                    speak("Toggling flashlight, Sir.", "FLASH_TOGGLE")
+                    speak("Flashlight on, Sir.", "FLASH_ON")
                 }
             }
 
-            // ============ TIME ============
+            // TIME
             cmd.contains("time") || cmd.contains("samay") -> {
-                val time = actionExecutor.getCurrentTime()
-                speak("Sir, abhi $time ho raha hai.", "TIME")
+                speak("Sir, abhi ${actionExecutor.getCurrentTime()} ho raha hai.", "TIME")
             }
 
-            // ============ DATE ============
+            // DATE
             cmd.contains("date") || cmd.contains("today") || cmd.contains("tarikh") -> {
-                val date = actionExecutor.getCurrentDate()
-                speak("Sir, aaj $date hai.", "DATE")
+                speak("Sir, aaj ${actionExecutor.getCurrentDate()} hai.", "DATE")
             }
 
-            // ============ BATTERY ============
+            // BATTERY
             cmd.contains("battery") || cmd.contains("charge") -> {
-                val level = actionExecutor.getBatteryLevel()
-                speak("Sir, aapki battery $level percent hai.", "BATTERY")
+                speak("Sir, battery ${actionExecutor.getBatteryLevel()} percent hai.", "BATTERY")
             }
 
-            // ============ CALL ============
+            // CALL
             cmd.contains("call") || cmd.contains("phone karo") || cmd.contains("dial") -> {
                 val contactName = cmd
-                    .replace("call", "")
-                    .replace("karo", "")
-                    .replace("phone", "")
-                    .replace("dial", "")
-                    .replace("please", "")
-                    .replace("to", "")
-                    .trim()
+                    .replace("call", "").replace("karo", "")
+                    .replace("phone", "").replace("dial", "")
+                    .replace("please", "").replace("to", "").trim()
 
                 if (contactName.isNotBlank()) {
                     val success = actionExecutor.callContact(contactName)
-                    if (success) {
-                        speak("Calling $contactName, Sir.", "CALL")
-                    } else {
-                        speak("Sir, $contactName naam ka contact nahi mila.", "CALL_ERROR")
-                    }
+                    if (success) speak("Calling $contactName, Sir.", "CALL")
+                    else speak("Sir, $contactName nahi mila.", "CALL_ERROR")
                 } else {
                     speak("Sir, kisko call karna hai?", "CALL_EMPTY")
                 }
                 pauseListeningUntil = System.currentTimeMillis() + 30000
             }
 
-            // ============ YOUTUBE ============
+            // YOUTUBE
             cmd.contains("youtube") || cmd.contains("play") || cmd.contains("gana") || cmd.contains("song") -> {
                 val query = cmd
-                    .replace("play", "")
-                    .replace("on youtube", "")
-                    .replace("youtube", "")
-                    .replace("song", "")
-                    .replace("gana", "")
-                    .replace("chalao", "")
-                    .replace("please", "")
-                    .trim()
+                    .replace("play", "").replace("on youtube", "")
+                    .replace("youtube", "").replace("song", "")
+                    .replace("gana", "").replace("chalao", "")
+                    .replace("please", "").trim()
+
                 if (query.isNotBlank()) {
                     actionExecutor.playOnYoutube(query)
-                    speak("Playing $query on YouTube, Sir.", "YOUTUBE")
+                    speak("Playing $query, Sir.", "YOUTUBE")
                 } else {
                     speak("Sir, kya play karna hai?", "YOUTUBE_EMPTY")
                 }
                 pauseListeningUntil = System.currentTimeMillis() + 120000
             }
 
-            // ============ OPEN APP ============
+            // OPEN APP
             cmd.startsWith("open ") || cmd.contains("kholo") || cmd.contains("launch") -> {
                 val appName = cmd
-                    .replace("open", "")
-                    .replace("kholo", "")
-                    .replace("launch", "")
-                    .replace("please", "")
-                    .trim()
-                val success = actionExecutor.openApp(appName)
-                if (success) {
-                    speak("Opening $appName, Sir.", "OPEN_APP")
+                    .replace("open", "").replace("kholo", "")
+                    .replace("launch", "").replace("please", "").trim()
+
+                if (appName.isNotBlank()) {
+                    val success = actionExecutor.openApp(appName)
+                    if (success) speak("Opening $appName, Sir.", "OPEN_APP")
+                    else speak("Sir, $appName nahi mili.", "APP_ERROR")
                 } else {
-                    speak("Sir, $appName app nahi mili.", "APP_ERROR")
+                    speak("Sir, kaunsi app kholni hai?", "APP_EMPTY")
                 }
             }
 
-            // ============ UNKNOWN - AI SE POOCHO ============
+            // AI
             else -> {
-                android.util.Log.d("JARVIS_CMD", "Sending to AI: [$cmd]")
                 askGroqAI(cmd)
             }
         }
     }
 
     // =====================================================
-    // GROQ AI - HINGLISH MODE
+    // GROQ AI
     // =====================================================
     private fun askGroqAI(question: String) {
-        val url = "https://api.groq.com/openai/v1/chat/completions"
+        try {
+            val url = "https://api.groq.com/openai/v1/chat/completions"
 
-        val requestBody = JSONObject().apply {
-            put("model", "openai/gpt-oss-20b")
-            put("messages", JSONArray().apply {
-                put(JSONObject().apply {
-                    put("role", "system")
-                    put("content", "You are Jarvis, a smart and friendly AI assistant for an Indian user. " +
-                            "RULES: " +
-                            "1. Always reply in HINGLISH (Hindi + English mixed) using ROMAN script only. " +
-                            "2. Example: 'Sir, aapka din bahut accha jayega. Kya main aapki koi aur madad kar sakta hoon?' " +
-                            "3. Address the user as 'Sir' always. " +
-                            "4. Keep replies SHORT - max 2-3 sentences. " +
-                            "5. Be witty, warm, and helpful like a real friend. " +
-                            "6. NEVER use Devanagari (हिंदी) script - only Roman letters. " +
-                            "7. If user speaks English, reply mostly in English. If Hindi, reply in Hinglish. " +
-                            "8. No markdown, no bullet points, no special symbols - just plain speech.")
+            val requestBody = JSONObject().apply {
+                put("model", "openai/gpt-oss-20b")
+                put("messages", JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("role", "system")
+                        put("content", "You are Jarvis, a smart, witty and friendly AI assistant for an Indian user. " +
+                                "RULES: " +
+                                "1. Always reply in HINGLISH (Hindi + English mixed) using ROMAN script only. " +
+                                "2. Address the user as 'Sir' always. " +
+                                "3. Keep replies SHORT - max 2-3 sentences. " +
+                                "4. Be warm, sweet, and helpful like a close friend. " +
+                                "5. NEVER use Devanagari script - only Roman letters. " +
+                                "6. No markdown, no bullet points - just plain speech. " +
+                                "7. If user asks to teach English, be a patient teacher.")
+                    })
+                    put(JSONObject().apply {
+                        put("role", "user")
+                        put("content", question)
+                    })
                 })
-                put(JSONObject().apply {
-                    put("role", "user")
-                    put("content", question)
-                })
-            })
-            put("temperature", 0.7)
-            put("max_tokens", 200)
-        }
-
-        val request = object : JsonObjectRequest(
-            Request.Method.POST,
-            url,
-            requestBody,
-            { response ->
-                try {
-                    val aiReply = response
-                        .getJSONArray("choices")
-                        .getJSONObject(0)
-                        .getJSONObject("message")
-                        .getString("content")
-                        .trim()
-
-                    android.util.Log.d("JARVIS_AI", "AI Reply: $aiReply")
-                    speak(aiReply, "AI_REPLY")
-
-                } catch (e: Exception) {
-                    android.util.Log.e("JARVIS_AI", "Parse error: ${e.message}")
-                    speak("Sorry Sir, samajh nahi paya.", "AI_ERROR")
-                }
-            },
-            { error ->
-                val errMsg = when {
-                    error.networkResponse != null -> "HTTP ${error.networkResponse.statusCode}"
-                    else -> error.message ?: "Unknown"
-                }
-                android.util.Log.e("JARVIS_AI", "API ERROR: $errMsg")
-                speak("Sir, error code $errMsg", "AI_NETWORK_ERROR")
+                put("temperature", 0.7)
+                put("max_tokens", 200)
             }
-        ) {
-            @Throws(AuthFailureError::class)
-            override fun getHeaders(): MutableMap<String, String> {
-                val headers = HashMap<String, String>()
-                headers["Authorization"] = "Bearer $LLAMA_API_KEY"
-                headers["Content-Type"] = "application/json"
-                return headers
-            }
-        }
 
-        requestQueue.add(request)
+            val request = object : JsonObjectRequest(
+                Request.Method.POST,
+                url,
+                requestBody,
+                { response ->
+                    try {
+                        val aiReply = response
+                            .getJSONArray("choices")
+                            .getJSONObject(0)
+                            .getJSONObject("message")
+                            .getString("content")
+                            .trim()
+
+                        android.util.Log.d("JARVIS_AI", "AI: $aiReply")
+                        speak(aiReply, "AI_REPLY")
+                    } catch (e: Exception) {
+                        android.util.Log.e("JARVIS_AI", "Parse: ${e.message}")
+                        speak("Sorry Sir, samajh nahi paya.", "AI_ERROR")
+                    }
+                },
+                { error ->
+                    val errMsg = when {
+                        error.networkResponse != null -> "HTTP ${error.networkResponse.statusCode}"
+                        else -> error.message ?: "Unknown"
+                    }
+                    android.util.Log.e("JARVIS_AI", "API ERROR: $errMsg")
+                    speak("Sorry Sir, connect nahi ho paya.", "AI_NETWORK_ERROR")
+                }
+            ) {
+                @Throws(AuthFailureError::class)
+                override fun getHeaders(): MutableMap<String, String> {
+                    val headers = HashMap<String, String>()
+                    headers["Authorization"] = "Bearer $LLAMA_API_KEY"
+                    headers["Content-Type"] = "application/json"
+                    return headers
+                }
+            }
+
+            requestQueue.add(request)
+        } catch (e: Exception) {
+            android.util.Log.e("JARVIS_AI", "askGroqAI error: ${e.message}")
+            speak("Sorry Sir, kuch problem hai.", "AI_ERROR")
+        }
     }
 
     // =====================================================
@@ -552,7 +645,7 @@ private fun resetConversationTimeout() {
     // =====================================================
     override fun onError(error: Int) {
         isRecognizerListening = false
-        android.util.Log.e("JARVIS_DEBUG", "Speech Error Code: $error")
+        android.util.Log.e("JARVIS_DEBUG", "Speech Error: $error")
         if (isListeningActive && !isSpeaking) {
             val delayMs = when (error) {
                 SpeechRecognizer.ERROR_NO_MATCH -> 300L
@@ -571,16 +664,15 @@ private fun resetConversationTimeout() {
     override fun onEndOfSpeech() {}
     override fun onEvent(eventType: Int, params: Bundle?) {}
 
-    // =====================================================
-    // DESTROY
-    // =====================================================
     override fun onDestroy() {
         super.onDestroy()
         isListeningActive = false
+        conversationTimeout?.let { handler.removeCallbacks(it) }
         handler.removeCallbacksAndMessages(null)
         try { speechRecognizer.destroy() } catch (_: Exception) {}
         try { textToSpeech.stop() } catch (_: Exception) {}
         try { textToSpeech.shutdown() } catch (_: Exception) {}
-        android.util.Log.d("JARVIS_DEBUG", "Service Destroyed - Mic turned off")
+        try { unregisterReceiver(CallReceiver.instance) } catch (_: Exception) {}
+        android.util.Log.d("JARVIS_DEBUG", "Service destroyed")
     }
 }
