@@ -52,7 +52,8 @@ class AssistantService : Service(), RecognitionListener {
     private var wakeHandled = false
     private var recognizerRestartPending = false
     private var pauseListeningUntil: Long = 0L
-
+    private var isConversationMode = false
+    private var conversationTimeout: Runnable? = null
     private val wakeTimeout = Runnable {
         isAwake = false
         wakeHandled = false
@@ -276,30 +277,69 @@ class AssistantService : Service(), RecognitionListener {
     // SPEECH HANDLER
     // =====================================================
     private fun handleSpeech(text: String) {
-        android.util.Log.d("JARVIS_DEBUG", "handleSpeech: [$text]")
+    android.util.Log.d("JARVIS_DEBUG", "handleSpeech: [$text]")
 
-        if (isAwake) {
-            isAwake = false
-            handler.removeCallbacks(wakeTimeout)
-            executeVoiceCommand(text)
+    // Conversation mode active hai
+    if (isConversationMode) {
+        val exitWords = listOf(
+            "stop", "band karo", "shut down", "goodbye", "bye",
+            "chup", "chup ho jao", "bas", "ruko", "mat suno",
+            "conversation band", "exit", "quit", "end conversation"
+        )
+        
+        val lowerText = text.lowercase().trim()
+        if (exitWords.any { lowerText.contains(it) }) {
+            isConversationMode = false
+            conversationTimeout?.let { handler.removeCallbacks(it) }
+            speak("Theek hai Sir, main chup ho jaati hoon.", "CONVERSATION_END")
             return
         }
 
-        if (wakeWordDetector.containsWakeWord(text)) {
-            val command = wakeWordDetector.removeWakeWord(text)
-            if (command.isBlank()) {
-                isAwake = true
-                handler.removeCallbacks(wakeTimeout)
-                handler.postDelayed(wakeTimeout, 8000)
-                speak("Yes Sir", "WAKE_UP")
-            } else {
-                executeVoiceCommand(command)
-            }
-        } else {
-            startListening()
-        }
+        resetConversationTimeout()
+        executeVoiceCommand(text)
+        return
     }
 
+    // Normal mode
+    if (isAwake) {
+        isAwake = false
+        handler.removeCallbacks(wakeTimeout)
+        isConversationMode = true
+        resetConversationTimeout()
+        executeVoiceCommand(text)
+        return
+    }
+
+    if (wakeWordDetector.containsWakeWord(text)) {
+        val command = wakeWordDetector.removeWakeWord(text)
+        if (command.isBlank()) {
+            isConversationMode = true
+            isAwake = true
+            handler.removeCallbacks(wakeTimeout)
+            handler.postDelayed(wakeTimeout, 10000)
+            resetConversationTimeout()
+            speak("Haan Sir, boliye. Main sun rahi hoon.", "WAKE_UP")
+        } else {
+            isConversationMode = true
+            resetConversationTimeout()
+            executeVoiceCommand(command)
+        }
+    } else {
+        startListening()
+    }
+}
+private fun resetConversationTimeout() {
+    conversationTimeout?.let { handler.removeCallbacks(it) }
+
+    val timeout = Runnable {
+        if (isConversationMode) {
+            isConversationMode = false
+            android.util.Log.d("JARVIS_CONV", "Conversation timeout - back to wake word")
+        }
+    }
+    conversationTimeout = timeout
+    handler.postDelayed(timeout, 60000)
+}
     // =====================================================
     // COMMAND EXECUTOR
     // =====================================================
