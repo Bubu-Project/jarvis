@@ -146,4 +146,101 @@ class ActionExecutor(private val context: Context) {
         }
         return null
     }
+       // ============ CALL HANDLING ============
+
+fun getContactName(number: String): String? {
+    val hasReadPermission = ContextCompat.checkSelfPermission(
+        context, Manifest.permission.READ_CONTACTS
+    ) == PackageManager.PERMISSION_GRANTED
+
+    if (!hasReadPermission) return null
+
+    try {
+        val uri = Uri.withAppendedPath(
+            ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+            Uri.encode(number)
+        )
+
+        val cursor = context.contentResolver.query(
+            uri,
+            arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
+            null, null, null
+        )
+
+        cursor?.use {
+            if (it.moveToFirst()) {
+                return it.getString(0)
+            }
+        }
+    } catch (e: Exception) {
+        android.util.Log.e("JARVIS_CALL", "Contact lookup error: ${e.message}")
+    }
+    return null
+}
+
+fun isSpamNumber(number: String): Boolean {
+    try {
+        val cleanNumber = number.replace(" ", "").replace("-", "").replace("+", "")
+
+        // India spam prefixes
+        val spamPrefixes = listOf("140", "1800", "1860", "1900")
+        for (prefix in spamPrefixes) {
+            if (cleanNumber.startsWith(prefix)) return true
+        }
+
+        // Short numbers (5-6 digits)
+        if (cleanNumber.length in 5..6 && cleanNumber.toLongOrNull() != null) {
+            return true
+        }
+
+        // Repeated digits
+        if (cleanNumber.length >= 10) {
+            val uniqueDigits = cleanNumber.toSet()
+            if (uniqueDigits.size <= 2) return true
+        }
+    } catch (e: Exception) {
+        android.util.Log.e("JARVIS_CALL", "Spam check error: ${e.message}")
+    }
+    return false
+}
+
+fun answerCall(): Boolean {
+    try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val telecomManager = context.getSystemService(Context.TELECOM_SERVICE)
+                    as android.telecom.TelecomManager
+
+            if (ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.ANSWER_PHONE_CALLS
+                ) == PackageManager.PERMISSION_GRANTED
+            ) {
+                telecomManager.acceptRingingCall()
+                return true
+            }
+        }
+    } catch (e: Exception) {
+        android.util.Log.e("JARVIS_CALL", "Answer failed: ${e.message}")
+    }
+    return false
+}
+
+fun rejectCall(): Boolean {
+    try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val telecomManager = context.getSystemService(Context.TELECOM_SERVICE)
+                    as android.telecom.TelecomManager
+
+            if (ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.ANSWER_PHONE_CALLS
+                ) == PackageManager.PERMISSION_GRANTED
+            ) {
+                telecomManager.endCall()
+                return true
+            }
+        }
+    } catch (e: Exception) {
+        android.util.Log.e("JARVIS_CALL", "Reject failed: ${e.message}")
+    }
+    return false
+}
 }
