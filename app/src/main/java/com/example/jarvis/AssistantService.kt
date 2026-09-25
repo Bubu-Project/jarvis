@@ -87,53 +87,74 @@ class AssistantService : Service(), RecognitionListener {
     // =====================================================
     // TTS - Girl Voice (GF Jaisi)
     // =====================================================
-    private fun setupTTS() {
-        try {
-            textToSpeech = TextToSpeech(this) { status ->
-                if (status == TextToSpeech.SUCCESS) {
-                    try {
-                        val result = textToSpeech.setLanguage(Locale("en", "IN"))
-                        ttsReady = result != TextToSpeech.LANG_MISSING_DATA &&
-                                result != TextToSpeech.LANG_NOT_SUPPORTED
-
-                        textToSpeech.setSpeechRate(0.95f)
-                        textToSpeech.setPitch(1.25f)
-
-                        try {
-                            val voices = textToSpeech.voices
-                            if (voices != null) {
-                                val femaleVoice = voices.firstOrNull { voice ->
-                                    voice.locale.language == "en" &&
-                                    (voice.name.contains("female", true) ||
-                                     voice.name.contains("-f-", true) ||
-                                     voice.name.contains("samantha", true) ||
-                                     voice.name.contains("victoria", true) ||
-                                     voice.name.contains("karen", true) ||
-                                     voice.name.contains("moira", true) ||
-                                     voice.name.contains("tessa", true) ||
-                                     voice.name.contains("veena", true) ||
-                                     voice.name.contains("raveena", true))
-                                }
-                                if (femaleVoice != null) {
-                                    textToSpeech.voice = femaleVoice
-                                    android.util.Log.d("JARVIS_TTS", "Female voice: ${femaleVoice.name}")
-                                }
-                            }
-                        } catch (e: Exception) {
-                            android.util.Log.e("JARVIS_TTS", "Voice error: ${e.message}")
-                        }
-
-                        setupTTSListener()
-                    } catch (e: Exception) {
-                        android.util.Log.e("JARVIS_TTS", "TTS setup error: ${e.message}")
+    
+private fun setupTTS() {
+    try {
+        textToSpeech = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                try {
+                    var result = textToSpeech.setLanguage(Locale("en", "IN"))
+                    if (result == TextToSpeech.LANG_MISSING_DATA ||
+                        result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                        result = textToSpeech.setLanguage(Locale.UK)
                     }
+                    if (result == TextToSpeech.LANG_MISSING_DATA ||
+                        result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                        result = textToSpeech.setLanguage(Locale.US)
+                    }
+
+                    ttsReady = result != TextToSpeech.LANG_MISSING_DATA &&
+                            result != TextToSpeech.LANG_NOT_SUPPORTED
+
+                    // ChatGPT jaisi clear, sweet, slow voice
+                    textToSpeech.setSpeechRate(0.85f)
+                    textToSpeech.setPitch(1.10f)
+
+                    // Best Indian female voice select karo
+                    try {
+                        val voices = textToSpeech.voices
+                        if (voices != null) {
+                            val femaleVoice = voices
+                                .filter { it.locale.language == "en" }
+                                .sortedByDescending { v ->
+                                    var score = 0
+                                    if (v.locale.country == "IN") score += 100
+                                    if (v.locale.country == "GB") score += 50
+                                    if (v.locale.country == "US") score += 30
+                                    if (v.name.contains("female", true)) score += 50
+                                    if (v.name.contains("-f-", true)) score += 40
+                                    if (v.name.contains("samantha", true)) score += 30
+                                    if (v.name.contains("victoria", true)) score += 30
+                                    if (v.name.contains("karen", true)) score += 30
+                                    if (v.name.contains("moira", true)) score += 30
+                                    if (v.name.contains("tessa", true)) score += 30
+                                    if (v.name.contains("veena", true)) score += 40
+                                    if (v.name.contains("raveena", true)) score += 40
+                                    if (v.name.contains("heera", true)) score += 40
+                                    if (v.name.contains("priya", true)) score += 40
+                                    score
+                                }
+                                .firstOrNull()
+
+                            if (femaleVoice != null) {
+                                textToSpeech.voice = femaleVoice
+                                android.util.Log.d("JARVIS_TTS", "Voice: ${femaleVoice.name} (${femaleVoice.locale})")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("JARVIS_TTS", "Voice error: ${e.message}")
+                    }
+
+                    setupTTSListener()
+                } catch (e: Exception) {
+                    android.util.Log.e("JARVIS_TTS", "TTS setup error: ${e.message}")
                 }
             }
-        } catch (e: Exception) {
-            android.util.Log.e("JARVIS_TTS", "TTS init error: ${e.message}")
         }
+    } catch (e: Exception) {
+        android.util.Log.e("JARVIS_TTS", "TTS init error: ${e.message}")
     }
-
+}
     private fun setupTTSListener() {
         textToSpeech.setOnUtteranceProgressListener(
             object : UtteranceProgressListener() {
