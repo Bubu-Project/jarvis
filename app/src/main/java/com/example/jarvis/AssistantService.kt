@@ -87,8 +87,7 @@ class AssistantService : Service(), RecognitionListener {
     // =====================================================
     // TTS - Girl Voice (GF Jaisi)
     // =====================================================
-    
-private fun setupTTS() {
+    private fun setupTTS() {
     try {
         textToSpeech = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
@@ -106,63 +105,10 @@ private fun setupTTS() {
                     ttsReady = result != TextToSpeech.LANG_MISSING_DATA &&
                             result != TextToSpeech.LANG_NOT_SUPPORTED
 
-                    // ChatGPT jaisi clear, sweet, slow voice
                     textToSpeech.setSpeechRate(0.85f)
                     textToSpeech.setPitch(1.10f)
 
-                    // Best Indian female voice select karo
-                    try {
-    val voices = textToSpeech.voices
-    if (voices != null) {
-        // Sirf female voices - male ko pehle hi filter out karo
-        val femaleVoiceNames = listOf(
-            "female", "-f-", "samantha", "victoria", "karen",
-            "moira", "tessa", "veena", "raveena", "heera",
-            "priya", "fiona", "susan", "allison", "ava",
-            "amelie", "joanna", "salli", "kendra", "kimberly"
-        )
-        
-        val maleVoiceNames = listOf(
-            "male", "-m-", "daniel", "alex", "fred",
-            "rishi", "ravi", "oliver", "thomas", "james"
-        )
-        
-        // Female voices ko filter karo
-        val femaleVoices = voices.filter { v ->
-            v.locale.language == "en" &&
-            femaleVoiceNames.any { v.name.contains(it, true) } &&
-            maleVoiceNames.none { v.name.contains(it, true) }
-        }
-        
-        if (femaleVoices.isNotEmpty()) {
-            // Best female voice choose karo
-            val bestVoice = femaleVoices.sortedByDescending { v ->
-                var score = 0
-                if (v.locale.country == "IN") score += 100
-                if (v.locale.country == "GB") score += 50
-                if (v.locale.country == "US") score += 30
-                if (v.name.contains("female", true)) score += 20
-                if (v.name.contains("veena", true)) score += 40
-                if (v.name.contains("raveena", true)) score += 40
-                if (v.name.contains("heera", true)) score += 40
-                if (v.name.contains("priya", true)) score += 40
-                score
-            }.first()
-            
-            textToSpeech.voice = bestVoice
-            android.util.Log.d("JARVIS_TTS", "Female voice set: ${bestVoice.name}")
-        } else {
-            android.util.Log.e("JARVIS_TTS", "No female voice found!")
-            // Pitch high karke female jaisa banao
-            textToSpeech.setPitch(1.35f)
-        }
-    }
-} catch (e: Exception) {
-    android.util.Log.e("JARVIS_TTS", "Voice error: ${e.message}")
-}
-                    } catch (e: Exception) {
-                        android.util.Log.e("JARVIS_TTS", "Voice error: ${e.message}")
-                    }
+                    selectFemaleVoice()
 
                     setupTTSListener()
                 } catch (e: Exception) {
@@ -174,6 +120,64 @@ private fun setupTTS() {
         android.util.Log.e("JARVIS_TTS", "TTS init error: ${e.message}")
     }
 }
+
+private fun selectFemaleVoice() {
+    try {
+        val voices = textToSpeech.voices ?: return
+
+        val femaleNames = listOf(
+            "female", "-f-", "samantha", "victoria", "karen",
+            "moira", "tessa", "veena", "raveena", "heera",
+            "priya", "fiona", "susan", "allison", "ava",
+            "amelie", "joanna", "salli", "kendra", "kimberly"
+        )
+
+        val maleNames = listOf(
+            "male", "-m-", "daniel", "alex", "fred",
+            "rishi", "ravi", "oliver", "thomas", "james"
+        )
+
+        val femaleVoices = voices.filter { v ->
+            v.locale.language == "en" &&
+            femaleNames.any { v.name.contains(it, true) } &&
+            maleNames.none { v.name.contains(it, true) }
+        }
+
+        if (femaleVoices.isEmpty()) {
+            android.util.Log.e("JARVIS_TTS", "No female voice found, using pitch boost")
+            textToSpeech.setPitch(1.35f)
+            return
+        }
+
+        var bestVoice: android.speech.tts.Voice? = null
+        var bestScore = -1
+
+        for (voice in femaleVoices) {
+            var score = 0
+            if (voice.locale.country == "IN") score += 100
+            if (voice.locale.country == "GB") score += 50
+            if (voice.locale.country == "US") score += 30
+            if (voice.name.contains("female", true)) score += 20
+            if (voice.name.contains("veena", true)) score += 40
+            if (voice.name.contains("raveena", true)) score += 40
+            if (voice.name.contains("heera", true)) score += 40
+            if (voice.name.contains("priya", true)) score += 40
+
+            if (score > bestScore) {
+                bestScore = score
+                bestVoice = voice
+            }
+        }
+
+        if (bestVoice != null) {
+            textToSpeech.voice = bestVoice
+            android.util.Log.d("JARVIS_TTS", "Female voice set: ${bestVoice.name}")
+        }
+    } catch (e: Exception) {
+        android.util.Log.e("JARVIS_TTS", "Voice selection error: ${e.message}")
+    }
+}
+
     private fun setupTTSListener() {
         textToSpeech.setOnUtteranceProgressListener(
             object : UtteranceProgressListener() {
