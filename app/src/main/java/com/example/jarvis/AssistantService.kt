@@ -85,98 +85,99 @@ class AssistantService : Service(), RecognitionListener {
     }
 
     // =====================================================
-    // TTS - Girl Voice (GF Jaisi)
+    // TTS - Clear Sweet Female Voice
     // =====================================================
     private fun setupTTS() {
-    try {
-        textToSpeech = TextToSpeech(this) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                try {
-                    var result = textToSpeech.setLanguage(Locale("en", "IN"))
-                    if (result == TextToSpeech.LANG_MISSING_DATA ||
-                        result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                        result = textToSpeech.setLanguage(Locale.UK)
+        try {
+            textToSpeech = TextToSpeech(this) { status ->
+                if (status == TextToSpeech.SUCCESS) {
+                    try {
+                        var result = textToSpeech.setLanguage(Locale("en", "IN"))
+                        if (result == TextToSpeech.LANG_MISSING_DATA ||
+                            result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                            result = textToSpeech.setLanguage(Locale.UK)
+                        }
+                        if (result == TextToSpeech.LANG_MISSING_DATA ||
+                            result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                            result = textToSpeech.setLanguage(Locale.US)
+                        }
+
+                        ttsReady = result != TextToSpeech.LANG_MISSING_DATA &&
+                                result != TextToSpeech.LANG_NOT_SUPPORTED
+
+                        // Clear aur sweet voice
+                        textToSpeech.setSpeechRate(0.90f)
+                        textToSpeech.setPitch(1.15f)
+
+                        selectFemaleVoice()
+
+                        setupTTSListener()
+                    } catch (e: Exception) {
+                        android.util.Log.e("JARVIS_TTS", "TTS setup error: ${e.message}")
                     }
-                    if (result == TextToSpeech.LANG_MISSING_DATA ||
-                        result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                        result = textToSpeech.setLanguage(Locale.US)
-                    }
-
-                    ttsReady = result != TextToSpeech.LANG_MISSING_DATA &&
-                            result != TextToSpeech.LANG_NOT_SUPPORTED
-
-                    textToSpeech.setSpeechRate(0.85f)
-                    textToSpeech.setPitch(1.10f)
-
-                    selectFemaleVoice()
-
-                    setupTTSListener()
-                } catch (e: Exception) {
-                    android.util.Log.e("JARVIS_TTS", "TTS setup error: ${e.message}")
                 }
             }
+        } catch (e: Exception) {
+            android.util.Log.e("JARVIS_TTS", "TTS init error: ${e.message}")
         }
-    } catch (e: Exception) {
-        android.util.Log.e("JARVIS_TTS", "TTS init error: ${e.message}")
     }
-}
 
-private fun selectFemaleVoice() {
-    try {
-        val voices = textToSpeech.voices ?: return
+    private fun selectFemaleVoice() {
+        try {
+            val voices = textToSpeech.voices ?: return
 
-        val femaleNames = listOf(
-            "female", "-f-", "samantha", "victoria", "karen",
-            "moira", "tessa", "veena", "raveena", "heera",
-            "priya", "fiona", "susan", "allison", "ava",
-            "amelie", "joanna", "salli", "kendra", "kimberly"
-        )
+            val femaleNames = listOf(
+                "female", "-f-", "samantha", "victoria", "karen",
+                "moira", "tessa", "veena", "raveena", "heera",
+                "priya", "fiona", "susan", "allison", "ava",
+                "amelie", "joanna", "salli", "kendra", "kimberly"
+            )
 
-        val maleNames = listOf(
-            "male", "-m-", "daniel", "alex", "fred",
-            "rishi", "ravi", "oliver", "thomas", "james"
-        )
+            val maleNames = listOf(
+                "male", "-m-", "daniel", "alex", "fred",
+                "rishi", "ravi", "oliver", "thomas", "james"
+            )
 
-        val femaleVoices = voices.filter { v ->
-            v.locale.language == "en" &&
-            femaleNames.any { v.name.contains(it, true) } &&
-            maleNames.none { v.name.contains(it, true) }
-        }
-
-        if (femaleVoices.isEmpty()) {
-            android.util.Log.e("JARVIS_TTS", "No female voice found, using pitch boost")
-            textToSpeech.setPitch(1.35f)
-            return
-        }
-
-        var bestVoice: android.speech.tts.Voice? = null
-        var bestScore = -1
-
-        for (voice in femaleVoices) {
-            var score = 0
-            if (voice.locale.country == "IN") score += 100
-            if (voice.locale.country == "GB") score += 50
-            if (voice.locale.country == "US") score += 30
-            if (voice.name.contains("female", true)) score += 20
-            if (voice.name.contains("veena", true)) score += 40
-            if (voice.name.contains("raveena", true)) score += 40
-            if (voice.name.contains("heera", true)) score += 40
-            if (voice.name.contains("priya", true)) score += 40
-
-            if (score > bestScore) {
-                bestScore = score
-                bestVoice = voice
+            val femaleVoices = voices.filter { v ->
+                v.locale.language == "en" &&
+                femaleNames.any { v.name.contains(it, true) } &&
+                maleNames.none { v.name.contains(it, true) }
             }
-        }
 
-        if (bestVoice != null) {
-            textToSpeech.voice = bestVoice
-            android.util.Log.d("JARVIS_TTS", "Female voice set: ${bestVoice.name}")
+            if (femaleVoices.isEmpty()) {
+                android.util.Log.e("JARVIS_TTS", "No female voice found, using pitch boost")
+                textToSpeech.setPitch(1.35f)
+                return
+            }
+
+            var bestVoice: android.speech.tts.Voice? = null
+            var bestScore = -1
+
+            for (voice in femaleVoices) {
+                var score = 0
+                if (voice.locale.country == "IN") score += 100
+                if (voice.locale.country == "GB") score += 50
+                if (voice.locale.country == "US") score += 30
+                if (voice.name.contains("female", true)) score += 20
+                if (voice.name.contains("veena", true)) score += 40
+                if (voice.name.contains("raveena", true)) score += 40
+                if (voice.name.contains("heera", true)) score += 40
+                if (voice.name.contains("priya", true)) score += 40
+
+                if (score > bestScore) {
+                    bestScore = score
+                    bestVoice = voice
+                }
+            }
+
+            if (bestVoice != null) {
+                textToSpeech.voice = bestVoice
+                android.util.Log.d("JARVIS_TTS", "Female voice set: ${bestVoice.name}")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("JARVIS_TTS", "Voice selection error: ${e.message}")
         }
-    } catch (e: Exception) {
-        android.util.Log.e("JARVIS_TTS", "Voice selection error: ${e.message}")
     }
-}
 
     private fun setupTTSListener() {
         textToSpeech.setOnUtteranceProgressListener(
@@ -251,10 +252,9 @@ private fun selectFemaleVoice() {
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 200L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)  // 1000 → 2000
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3500L)  // 2000 → 3500
+            // Silence timeout badha diya - green popup kam blink karega
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3500L)
         }
     }
 
@@ -338,23 +338,40 @@ private fun selectFemaleVoice() {
     }
 
     // =====================================================
-    // SPEECH HANDLER (Conversation Mode)
+    // SPEECH HANDLER (Conversation Mode with Noise Filter)
     // =====================================================
     private fun handleSpeech(text: String) {
         android.util.Log.d("JARVIS_DEBUG", "handleSpeech: [$text]")
 
         if (isConversationMode) {
+            val lowerText = text.lowercase().trim()
+
+            // Exit words
             val exitWords = listOf(
                 "stop", "band karo", "shut down", "goodbye", "bye",
                 "chup", "chup ho jao", "bas", "ruko", "mat suno",
                 "conversation band", "exit", "quit", "end conversation"
             )
-
-            val lowerText = text.lowercase().trim()
             if (exitWords.any { lowerText.contains(it) }) {
                 isConversationMode = false
                 conversationTimeout?.let { handler.removeCallbacks(it) }
                 speak("Theek hai Sir, main chup ho jaati hoon.", "CONVERSATION_END")
+                return
+            }
+
+            // NOISE FILTER - chhote aur bekaar text ignore karo
+            val words = lowerText.split(" ").filter { it.isNotBlank() }
+            val actionKeywords = listOf(
+                "flashlight", "torch", "call", "play", "youtube", "open", "kholo",
+                "time", "date", "battery", "weather", "mausam", "kya", "kaise",
+                "kaun", "kahan", "batao", "sikhao", "samjhao", "capital", "rajdhani"
+            )
+            val hasKeyword = actionKeywords.any { lowerText.contains(it) }
+
+            // Agar 3 se kam word hain AUR koi keyword nahi hai, toh noise samjho
+            if (words.size < 3 && !hasKeyword) {
+                android.util.Log.d("JARVIS_CONV", "Ignoring noise: [$lowerText]")
+                resetConversationTimeout()
                 return
             }
 
@@ -402,7 +419,7 @@ private fun selectFemaleVoice() {
                 }
             }
             conversationTimeout = timeout
-            handler.postDelayed(timeout, 60000)
+            handler.postDelayed(timeout, 90000)
         } catch (e: Exception) {
             android.util.Log.e("JARVIS_CONV", "Timeout error: ${e.message}")
         }
@@ -546,7 +563,7 @@ private fun selectFemaleVoice() {
                 } else {
                     speak("Sir, kisko call karna hai?", "CALL_EMPTY")
                 }
-                pauseListeningUntil = System.currentTimeMillis() + 30000
+                pauseListeningUntil = System.currentTimeMillis() + 5000
             }
 
             // YOUTUBE
@@ -563,7 +580,7 @@ private fun selectFemaleVoice() {
                 } else {
                     speak("Sir, kya play karna hai?", "YOUTUBE_EMPTY")
                 }
-                pauseListeningUntil = System.currentTimeMillis() + 120000
+                pauseListeningUntil = System.currentTimeMillis() + 10000
             }
 
             // OPEN APP
