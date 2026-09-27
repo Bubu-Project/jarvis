@@ -40,15 +40,14 @@ class AssemblyAISTT(private val context: Context) {
         fetchTokenAndConnect()
     }
 
-    // STEP 1: Temporary Token Fetch Karna (Naya v3 Endpoint)
+    // STEP 1: Temporary Token Fetch Karna (Sahi v3 Endpoint - GET request)
     private fun fetchTokenAndConnect() {
         val client = OkHttpClient()
-        // Naya v3 Token Endpoint aur GET request
         val url = "https://streaming.assemblyai.com/v3/token?expires_in_seconds=3600"
-        
+
         val request = Request.Builder()
             .url(url)
-            .addHeader("Authorization", API_KEY)
+            .addHeader("Authorization", API_KEY) // Bina "Bearer" ke
             .get()
             .build()
 
@@ -76,14 +75,17 @@ class AssemblyAISTT(private val context: Context) {
         })
     }
 
-    // STEP 2: WebSocket Connect Karna (Naya v3 Endpoint)
+    // STEP 2: WebSocket Connect Karna (Sahi v3 Endpoint with required parameters)
     @SuppressLint("MissingPermission")
     private fun connectWebSocket(token: String) {
         try {
             val client = OkHttpClient.Builder().readTimeout(0, TimeUnit.MILLISECONDS).build()
+            
+            // URL mein speech_model aur language_codes add karna zaroori hai
+            val url = "wss://streaming.assemblyai.com/v3/ws?sample_rate=16000&speech_model=universal-3-5-pro&language_codes=en&token=$token"
+            
             val request = Request.Builder()
-                // Naya v3 WebSocket Endpoint
-                .url("wss://streaming.assemblyai.com/v3/ws?sample_rate=16000&token=$token")
+                .url(url)
                 .build()
 
             webSocket = client.newWebSocket(request, object : WebSocketListener() {
@@ -98,7 +100,7 @@ class AssemblyAISTT(private val context: Context) {
                         val type = json.get("type")?.asString ?: ""
                         val transcript = json.get("transcript")?.asString ?: ""
 
-                        // v3 ke naye message types
+                        // v3 naya message format
                         if (type == "Turn" && transcript.isNotBlank()) {
                             val isFinal = json.get("end_of_turn")?.asBoolean ?: false
                             handler.post { listener?.onTranscript(transcript, isFinal) }
