@@ -82,7 +82,7 @@ class AssemblyAISTT(private val context: Context) {
             val client = OkHttpClient.Builder().readTimeout(0, TimeUnit.MILLISECONDS).build()
             
             // URL mein speech_model aur language_codes add karna zaroori hai
-            val url = "wss://streaming.assemblyai.com/v3/ws?sample_rate=16000&speech_model=universal-3-5-pro&language_codes=en&token=$token"
+            val url = "wss://streaming.assemblyai.com/v3/ws?sample_rate=16000&speech_model=universal-3-6-pro&language_codes=en&token=$token"
             
             val request = Request.Builder()
                 .url(url)
