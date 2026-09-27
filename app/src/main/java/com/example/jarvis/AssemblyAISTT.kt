@@ -11,6 +11,7 @@ import android.util.Log
 import android.widget.Toast
 import com.google.gson.JsonParser
 import okhttp3.*
+import okio.ByteString.Companion.toByteString
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -37,7 +38,7 @@ class AssemblyAISTT(private val context: Context) {
     }
 
     // =====================================================
-    // STEP 1: Token Fetch (v3 API)
+    // STEP 1: Token Fetch (v3 API - GET request)
     // =====================================================
     private fun fetchTokenAndConnect() {
         val client = OkHttpClient()
@@ -45,7 +46,7 @@ class AssemblyAISTT(private val context: Context) {
 
         val request = Request.Builder()
             .url(url)
-            .addHeader("Authorization", API_KEY)
+            .addHeader("Authorization", API_KEY) // Bina "Bearer" ke
             .get()
             .build()
 
@@ -61,17 +62,23 @@ class AssemblyAISTT(private val context: Context) {
                 if (response.isSuccessful) {
                     try {
                         val responseBody = response.body?.string() ?: ""
+                        Log.d("JARVIS_STT", "Token response: $responseBody")
                         val token = JsonParser.parseString(responseBody)
                             .asJsonObject.get("token").asString
-                        Log.d("JARVIS_STT", "Token fetched")
+                        Log.d("JARVIS_STT", "Token fetched successfully")
                         connectWebSocket(token)
                     } catch (e: Exception) {
                         Log.e("JARVIS_STT", "Token parse error: ${e.message}")
                     }
                 } else {
-                    Log.e("JARVIS_STT", "Token API failed: ${response.code}")
+                    val errBody = try { response.body?.string() ?: "" } catch (e: Exception) { "" }
+                    Log.e("JARVIS_STT", "Token API failed: ${response.code} - $errBody")
                     handler.post {
-                        Toast.makeText(context, "Token Error: ${response.code}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(
+                            context,
+                            "Token Error: ${response.code}",
+                            Toast.LENGTH_LONG
+                        ).show()
                     }
                 }
             }
@@ -132,9 +139,14 @@ class AssemblyAISTT(private val context: Context) {
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     val code = response?.code ?: 0
-                    Log.e("JARVIS_STT", "WS failed: ${t.message} | Code: $code")
+                    val body = try { response?.body?.string() ?: "" } catch (e: Exception) { "" }
+                    Log.e("JARVIS_STT", "WS failed: ${t.message} | Code: $code | Body: $body")
                     handler.post {
-                        Toast.makeText(context, "Error: ${t.message} (Code: $code)", Toast.LENGTH_LONG).show()
+                        Toast.makeText(
+                            context,
+                            "Error: ${t.message} (Code: $code)",
+                            Toast.LENGTH_LONG
+                        ).show()
                         listener?.onError(t.message ?: "Connection failed")
                     }
                 }
@@ -150,7 +162,7 @@ class AssemblyAISTT(private val context: Context) {
     }
 
     // =====================================================
-    // STEP 3: Audio Streaming (BINARY frames, no JSON!)
+    // STEP 3: Audio Streaming (RAW binary, no JSON/base64)
     // =====================================================
     @SuppressLint("MissingPermission")
     private fun startAudioStreaming() {
@@ -172,6 +184,9 @@ class AssemblyAISTT(private val context: Context) {
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
                 Log.e("JARVIS_STT", "Mic init failed")
+                handler.post {
+                    Toast.makeText(context, "Mic init failed!", Toast.LENGTH_LONG).show()
+                }
                 return
             }
 
@@ -179,17 +194,14 @@ class AssemblyAISTT(private val context: Context) {
             Log.d("JARVIS_STT", "Audio streaming started")
 
             recordingThread = Thread {
-                // 50ms chunks = 800 samples * 2 bytes = 1600 bytes
-                val chunkSize = 1600
+                val chunkSize = 1600 // 50ms chunks at 16kHz mono 16-bit
                 val buffer = ByteArray(chunkSize)
                 while (isRecording) {
                     val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
                     if (read > 0) {
-                        // ✅ RAW BINARY bhejo, JSON/base64 nahi
                         val audioBytes = buffer.copyOf(read)
-                        webSocket?.send(
-                            okhttp3.ByteString.of(*audioBytes)
-                        )
+                        // ✅ RAW BINARY bhejo, okio.ByteString ke through
+                        webSocket?.send(audioBytes.toByteString())
                     }
                 }
             }
@@ -197,6 +209,9 @@ class AssemblyAISTT(private val context: Context) {
 
         } catch (e: Exception) {
             Log.e("JARVIS_STT", "Audio start error: ${e.message}")
+            handler.post {
+                Toast.makeText(context, "Audio Error: ${e.message}", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -205,10 +220,20 @@ class AssemblyAISTT(private val context: Context) {
     // =====================================================
     fun stopListening() {
         isRecording = false
-        try { recordingThread?.join(1000); recordingThread = null } catch (_: Exception) {}
-        try { audioRecord?.stop(); audioRecord?.release(); audioRecord = null } catch (_: Exception) {}
-        try { webSocket?.close(1000, "Closing"); webSocket = null } catch (_: Exception) {}
-        Log.d("JARVIS_STT", "Stopped")
+        try {
+            recordingThread?.join(1000)
+            recordingThread = null
+        } catch (_: Exception) {}
+        try {
+            audioRecord?.stop()
+            audioRecord?.release()
+            audioRecord = null
+        } catch (_: Exception) {}
+        try {
+            webSocket?.close(1000, "Closing")
+            webSocket = null
+        } catch (_: Exception) {}
+        Log.d("JARVIS_STT", "Stopped listening")
     }
 
     fun isListening(): Boolean = isRecording
