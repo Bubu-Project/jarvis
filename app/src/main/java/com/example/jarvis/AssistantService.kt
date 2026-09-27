@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -56,19 +57,14 @@ class AssistantService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // =====================================================
-    // SERVICE KO ZINDA RAKHNE KA FIX
-    // =====================================================
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         android.util.Log.d("JARVIS_DEBUG", "onStartCommand called")
-        return START_STICKY  // Android khud restart karega agar service mar jaye
+        return START_STICKY
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
         android.util.Log.d("JARVIS_DEBUG", "Task removed - restarting service")
-
-        // Recent apps se swipe karne pe bhi service restart hogi
         try {
             val restartService = Intent(applicationContext, this.javaClass)
             restartService.setPackage(packageName)
@@ -126,7 +122,6 @@ class AssistantService : Service() {
                 override fun onError(message: String) {
                     handler.post {
                         android.util.Log.e("JARVIS_STT", "Error: $message")
-                        // 3 second baad retry karo
                         handler.postDelayed({
                             if (isListeningActive) {
                                 android.util.Log.d("JARVIS_STT", "Retrying connection...")
@@ -218,8 +213,8 @@ class AssistantService : Service() {
 
             val femaleVoices = voices.filter { v ->
                 v.locale.language == "en" &&
-                femaleNames.any { v.name.contains(it, true) } &&
-                maleNames.none { v.name.contains(it, true) }
+                        femaleNames.any { v.name.contains(it, true) } &&
+                        maleNames.none { v.name.contains(it, true) }
             }
 
             if (femaleVoices.isEmpty()) {
@@ -267,6 +262,11 @@ class AssistantService : Service() {
                     handler.post {
                         isSpeaking = false
                         lastProcessedText = ""
+                        handler.postDelayed({
+                            if (!isSpeaking) {
+                                try { assemblyAISTT.resumeStreaming() } catch (_: Exception) {}
+                            }
+                        }, 800)
                     }
                 }
 
@@ -274,6 +274,11 @@ class AssistantService : Service() {
                     handler.post {
                         isSpeaking = false
                         lastProcessedText = ""
+                        handler.postDelayed({
+                            if (!isSpeaking) {
+                                try { assemblyAISTT.resumeStreaming() } catch (_: Exception) {}
+                            }
+                        }, 800)
                     }
                 }
             }
@@ -284,7 +289,14 @@ class AssistantService : Service() {
         if (!ttsReady) return
         handler.post {
             isSpeaking = true
-            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
+            try { assemblyAISTT.pauseStreaming() } catch (_: Exception) {}
+
+            // Volume max karo
+            val params = Bundle()
+            params.putInt(TextToSpeech.Engine.KEY_PARAM_VOLUME, 100)
+            params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
+
+            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, params, id)
         }
     }
 
