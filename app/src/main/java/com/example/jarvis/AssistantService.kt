@@ -1,17 +1,19 @@
 package com.example.jarvis
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
 import android.os.Build
-import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.core.app.NotificationCompat
@@ -54,6 +56,39 @@ class AssistantService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // =====================================================
+    // SERVICE KO ZINDA RAKHNE KA FIX
+    // =====================================================
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        android.util.Log.d("JARVIS_DEBUG", "onStartCommand called")
+        return START_STICKY  // Android khud restart karega agar service mar jaye
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        android.util.Log.d("JARVIS_DEBUG", "Task removed - restarting service")
+
+        // Recent apps se swipe karne pe bhi service restart hogi
+        try {
+            val restartService = Intent(applicationContext, this.javaClass)
+            restartService.setPackage(packageName)
+            val restartPendingIntent = PendingIntent.getService(
+                applicationContext,
+                1,
+                restartService,
+                PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            alarmManager.set(
+                AlarmManager.ELAPSED_REALTIME,
+                SystemClock.elapsedRealtime() + 1000,
+                restartPendingIntent
+            )
+        } catch (e: Exception) {
+            android.util.Log.e("JARVIS_DEBUG", "Restart error: ${e.message}")
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         try {
@@ -91,6 +126,13 @@ class AssistantService : Service() {
                 override fun onError(message: String) {
                     handler.post {
                         android.util.Log.e("JARVIS_STT", "Error: $message")
+                        // 3 second baad retry karo
+                        handler.postDelayed({
+                            if (isListeningActive) {
+                                android.util.Log.d("JARVIS_STT", "Retrying connection...")
+                                setupAssemblyAI()
+                            }
+                        }, 3000)
                     }
                 }
             })
@@ -108,24 +150,18 @@ class AssistantService : Service() {
         val cleanText = text.lowercase(Locale.US).trim()
         if (cleanText.isBlank()) return
 
-        // TTS bol raha hai toh ignore karo
         if (isSpeaking) return
-
-        // Duplicate processing se bacho
         if (cleanText == lastProcessedText && isFinal) return
 
         android.util.Log.d("JARVIS_STT", "Transcript [$isFinal]: $cleanText")
 
-        // PARTIAL - sirf wake word check karo
         if (!isFinal) {
             if (!isAwake && !isConversationMode && wakeWordDetector.containsWakeWord(cleanText)) {
-                // Wake word detected in partial
                 android.util.Log.d("JARVIS_STT", "Wake word spotted")
             }
             return
         }
 
-        // FINAL - ab process karo
         lastProcessedText = cleanText
         handleSpeech(cleanText)
     }
@@ -258,7 +294,6 @@ class AssistantService : Service() {
     private fun handleSpeech(text: String) {
         android.util.Log.d("JARVIS_DEBUG", "handleSpeech: [$text]")
 
-        // Conversation mode
         if (isConversationMode) {
             val lowerText = text.lowercase().trim()
             val exitWords = listOf(
@@ -273,7 +308,6 @@ class AssistantService : Service() {
                 return
             }
 
-            // Noise filter
             val words = lowerText.split(" ").filter { it.isNotBlank() }
             val actionKeywords = listOf(
                 "flashlight", "torch", "call", "play", "youtube", "open", "kholo",
@@ -293,7 +327,6 @@ class AssistantService : Service() {
             return
         }
 
-        // Normal mode - wake word
         if (isAwake) {
             isAwake = false
             handler.removeCallbacks(wakeTimeout)
@@ -410,7 +443,6 @@ class AssistantService : Service() {
         android.util.Log.d("JARVIS_CMD", "COMMAND: [$cmd]")
 
         when {
-            // CALL ANSWER
             isWaitingForCallResponse && (
                 cmd.contains("haan") || cmd.contains("yes") || cmd.contains("uthao") ||
                 cmd.contains("utha") || cmd.contains("answer") || cmd.contains("pick") ||
@@ -422,7 +454,6 @@ class AssistantService : Service() {
                 pendingCallName = null
             }
 
-            // CALL REJECT
             isWaitingForCallResponse && (
                 cmd.contains("nahi") || cmd.contains("no") || cmd.contains("reject") ||
                 cmd.contains("kato") || cmd.contains("kat") || cmd.contains("cut") ||
@@ -434,7 +465,6 @@ class AssistantService : Service() {
                 pendingCallName = null
             }
 
-            // FLASHLIGHT
             cmd.contains("flashlight") || cmd.contains("flash light") || cmd.contains("torch") -> {
                 if (cmd.contains("off") || cmd.contains("band") || cmd.contains("bujha")) {
                     actionExecutor.toggleFlashlight(false)
@@ -445,22 +475,18 @@ class AssistantService : Service() {
                 }
             }
 
-            // TIME
             cmd.contains("time") || cmd.contains("samay") -> {
                 speak("Sir, abhi ${actionExecutor.getCurrentTime()} ho raha hai.", "TIME")
             }
 
-            // DATE
             cmd.contains("date") || cmd.contains("today") || cmd.contains("tarikh") -> {
                 speak("Sir, aaj ${actionExecutor.getCurrentDate()} hai.", "DATE")
             }
 
-            // BATTERY
             cmd.contains("battery") || cmd.contains("charge") -> {
                 speak("Sir, battery ${actionExecutor.getBatteryLevel()} percent hai.", "BATTERY")
             }
 
-            // CALL
             cmd.contains("call") || cmd.contains("phone karo") || cmd.contains("dial") -> {
                 val contactName = cmd
                     .replace("call", "").replace("karo", "")
@@ -476,7 +502,6 @@ class AssistantService : Service() {
                 }
             }
 
-            // YOUTUBE
             cmd.contains("youtube") || cmd.contains("play") || cmd.contains("gana") || cmd.contains("song") -> {
                 val query = cmd
                     .replace("play", "").replace("on youtube", "")
@@ -492,7 +517,6 @@ class AssistantService : Service() {
                 }
             }
 
-            // OPEN APP
             cmd.startsWith("open ") || cmd.contains("kholo") || cmd.contains("launch") -> {
                 val appName = cmd
                     .replace("open", "").replace("kholo", "")
@@ -507,7 +531,6 @@ class AssistantService : Service() {
                 }
             }
 
-            // AI
             else -> {
                 askGroqAI(cmd)
             }
@@ -607,6 +630,7 @@ class AssistantService : Service() {
             .setContentTitle("Jarvis AI")
             .setContentText("Listening for 'Jarvis'...")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setOngoing(true)
             .build()
 
         startForeground(1, notification)
