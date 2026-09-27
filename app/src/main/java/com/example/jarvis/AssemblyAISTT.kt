@@ -40,16 +40,16 @@ class AssemblyAISTT(private val context: Context) {
         fetchTokenAndConnect()
     }
 
-    // STEP 1: Temporary Token Fetch Karna (v2 API)
+    // STEP 1: Temporary Token Fetch Karna (Naya v3 Endpoint)
     private fun fetchTokenAndConnect() {
         val client = OkHttpClient()
-        val json = "{\"expires_in\": 3600}"
-        val body = json.toRequestBody("application/json".toMediaType())
-
+        // Naya v3 Token Endpoint aur GET request
+        val url = "https://streaming.assemblyai.com/v3/token?expires_in_seconds=3600"
+        
         val request = Request.Builder()
-            .url("https://api.assemblyai.com/v2/realtime/token")
+            .url(url)
             .addHeader("Authorization", API_KEY)
-            .post(body)
+            .get()
             .build()
 
         client.newCall(request).enqueue(object : Callback {
@@ -76,13 +76,14 @@ class AssemblyAISTT(private val context: Context) {
         })
     }
 
-    // STEP 2: WebSocket Connect Karna (v2 Realtime API)
+    // STEP 2: WebSocket Connect Karna (Naya v3 Endpoint)
     @SuppressLint("MissingPermission")
     private fun connectWebSocket(token: String) {
         try {
             val client = OkHttpClient.Builder().readTimeout(0, TimeUnit.MILLISECONDS).build()
             val request = Request.Builder()
-                .url("wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000&token=$token")
+                // Naya v3 WebSocket Endpoint
+                .url("wss://streaming.assemblyai.com/v3/ws?sample_rate=16000&token=$token")
                 .build()
 
             webSocket = client.newWebSocket(request, object : WebSocketListener() {
@@ -95,12 +96,12 @@ class AssemblyAISTT(private val context: Context) {
                     try {
                         val json = JsonParser.parseString(text).asJsonObject
                         val type = json.get("type")?.asString ?: ""
-                        val transcript = json.get("text")?.asString ?: ""
+                        val transcript = json.get("transcript")?.asString ?: ""
 
-                        if (type == "FinalTranscript" && transcript.isNotBlank()) {
-                            handler.post { listener?.onTranscript(transcript, true) }
-                        } else if (type == "PartialTranscript" && transcript.isNotBlank()) {
-                            handler.post { listener?.onTranscript(transcript, false) }
+                        // v3 ke naye message types
+                        if (type == "Turn" && transcript.isNotBlank()) {
+                            val isFinal = json.get("end_of_turn")?.asBoolean ?: false
+                            handler.post { listener?.onTranscript(transcript, isFinal) }
                         }
                     } catch (e: Exception) {
                         Log.e("JARVIS_STT", "Parse error: ${e.message}")
@@ -127,7 +128,6 @@ class AssemblyAISTT(private val context: Context) {
         
         if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
             Log.e("JARVIS_STT", "Mic init failed")
-            handler.post { Toast.makeText(context, "Mic Init Failed!", Toast.LENGTH_LONG).show() }
             return
         }
 
