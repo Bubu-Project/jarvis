@@ -58,13 +58,11 @@ class AssistantService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        android.util.Log.d("JARVIS_DEBUG", "onStartCommand called")
         return START_STICKY
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        android.util.Log.d("JARVIS_DEBUG", "Task removed - restarting service")
         try {
             val restartService = Intent(applicationContext, this.javaClass)
             restartService.setPackage(packageName)
@@ -80,16 +78,12 @@ class AssistantService : Service() {
                 SystemClock.elapsedRealtime() + 1000,
                 restartPendingIntent
             )
-        } catch (e: Exception) {
-            android.util.Log.e("JARVIS_DEBUG", "Restart error: ${e.message}")
-        }
+        } catch (_: Exception) {}
     }
 
     override fun onCreate() {
         super.onCreate()
         try {
-            android.util.Log.d("JARVIS_DEBUG", "Service onCreate started")
-
             audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
             actionExecutor = ActionExecutor(this)
             requestQueue = Volley.newRequestQueue(this)
@@ -98,71 +92,46 @@ class AssistantService : Service() {
             setupCallReceiver()
             setupAssemblyAI()
             isListeningActive = true
-
-            android.util.Log.d("JARVIS_DEBUG", "Service onCreate completed")
         } catch (e: Exception) {
             android.util.Log.e("JARVIS_DEBUG", "CRASH in onCreate: ${e.message}")
-            e.printStackTrace()
         }
     }
 
-    // =====================================================
-    // ASSEMBLYAI STT SETUP
-    // =====================================================
     private fun setupAssemblyAI() {
         try {
             assemblyAISTT = AssemblyAISTT(this)
             assemblyAISTT.setListener(object : AssemblyAISTT.TranscriptionListener {
                 override fun onTranscript(text: String, isFinal: Boolean) {
-                    handler.post {
-                        handleTranscript(text, isFinal)
-                    }
+                    handler.post { handleTranscript(text, isFinal) }
                 }
-
                 override fun onError(message: String) {
                     handler.post {
-                        android.util.Log.e("JARVIS_STT", "Error: $message")
                         handler.postDelayed({
-                            if (isListeningActive) {
-                                android.util.Log.d("JARVIS_STT", "Retrying connection...")
-                                setupAssemblyAI()
-                            }
+                            if (isListeningActive) setupAssemblyAI()
                         }, 3000)
                     }
                 }
             })
             assemblyAISTT.startListening()
-            android.util.Log.d("JARVIS_STT", "AssemblyAI started")
         } catch (e: Exception) {
             android.util.Log.e("JARVIS_STT", "Setup failed: ${e.message}")
         }
     }
 
-    // =====================================================
-    // HANDLE TRANSCRIPT FROM ASSEMBLYAI
-    // =====================================================
     private fun handleTranscript(text: String, isFinal: Boolean) {
         val cleanText = text.lowercase(Locale.US).trim()
         if (cleanText.isBlank()) return
-
         if (isSpeaking) return
         if (cleanText == lastProcessedText && isFinal) return
 
-        android.util.Log.d("JARVIS_STT", "Transcript [$isFinal]: $cleanText")
-
-        if (!isFinal) {
-            if (!isAwake && !isConversationMode && wakeWordDetector.containsWakeWord(cleanText)) {
-                android.util.Log.d("JARVIS_STT", "Wake word spotted")
-            }
-            return
-        }
+        if (!isFinal) return
 
         lastProcessedText = cleanText
         handleSpeech(cleanText)
     }
 
     // =====================================================
-    // TTS - Clear Sweet Female Voice
+    // TTS - Female Voice + High Pitch (agar female voice na mile)
     // =====================================================
     private fun setupTTS() {
         try {
@@ -183,7 +152,7 @@ class AssistantService : Service() {
                                 result != TextToSpeech.LANG_NOT_SUPPORTED
 
                         textToSpeech.setSpeechRate(0.90f)
-                        textToSpeech.setPitch(1.15f)
+                        textToSpeech.setPitch(1.40f) // ✅ Pitch badha diya
 
                         selectFemaleVoice()
                         setupTTSListener()
@@ -218,7 +187,8 @@ class AssistantService : Service() {
             }
 
             if (femaleVoices.isEmpty()) {
-                textToSpeech.setPitch(1.35f)
+                textToSpeech.setPitch(1.45f) // ✅ Fallback pitch aur badha
+                android.util.Log.e("JARVIS_TTS", "No female voice, using pitch 1.45")
                 return
             }
 
@@ -291,7 +261,6 @@ class AssistantService : Service() {
             isSpeaking = true
             try { assemblyAISTT.pauseStreaming() } catch (_: Exception) {}
 
-            // Volume max karo
             val params = Bundle()
             params.putInt(TextToSpeech.Engine.KEY_PARAM_VOLUME, 100)
             params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
@@ -304,8 +273,6 @@ class AssistantService : Service() {
     // SPEECH HANDLER
     // =====================================================
     private fun handleSpeech(text: String) {
-        android.util.Log.d("JARVIS_DEBUG", "handleSpeech: [$text]")
-
         if (isConversationMode) {
             val lowerText = text.lowercase().trim()
             val exitWords = listOf(
@@ -329,7 +296,6 @@ class AssistantService : Service() {
             val hasKeyword = actionKeywords.any { lowerText.contains(it) }
 
             if (words.size < 2 && !hasKeyword) {
-                android.util.Log.d("JARVIS_CONV", "Ignoring noise: [$lowerText]")
                 resetConversationTimeout()
                 return
             }
@@ -372,14 +338,11 @@ class AssistantService : Service() {
             val timeout = Runnable {
                 if (isConversationMode) {
                     isConversationMode = false
-                    android.util.Log.d("JARVIS_CONV", "Timeout - wake word mode")
                 }
             }
             conversationTimeout = timeout
             handler.postDelayed(timeout, 90000)
-        } catch (e: Exception) {
-            android.util.Log.e("JARVIS_CONV", "Timeout error: ${e.message}")
-        }
+        } catch (_: Exception) {}
     }
 
     // =====================================================
@@ -410,7 +373,6 @@ class AssistantService : Service() {
                 android.telephony.TelephonyManager.ACTION_PHONE_STATE_CHANGED
             )
             registerReceiver(receiver, filter)
-            android.util.Log.d("JARVIS_CALL", "CallReceiver registered")
         } catch (e: Exception) {
             android.util.Log.e("JARVIS_CALL", "Receiver setup failed: ${e.message}")
         }
@@ -421,7 +383,6 @@ class AssistantService : Service() {
 
         val isSpam = actionExecutor.isSpamNumber(number)
         if (isSpam) {
-            android.util.Log.d("JARVIS_CALL", "Spam: $number")
             speak("Sir, spam call aa raha hai. Reject kar rahi hoon.", "SPAM_CALL")
             handler.postDelayed({ actionExecutor.rejectCall() }, 3500)
             return
@@ -452,7 +413,6 @@ class AssistantService : Service() {
     // =====================================================
     private fun executeVoiceCommand(command: String) {
         val cmd = command.lowercase(Locale.US).trim()
-        android.util.Log.d("JARVIS_CMD", "COMMAND: [$cmd]")
 
         when {
             isWaitingForCallResponse && (
@@ -581,9 +541,7 @@ class AssistantService : Service() {
             }
 
             val request = object : JsonObjectRequest(
-                Request.Method.POST,
-                url,
-                requestBody,
+                Request.Method.POST, url, requestBody,
                 { response ->
                     try {
                         val aiReply = response
@@ -592,11 +550,8 @@ class AssistantService : Service() {
                             .getJSONObject("message")
                             .getString("content")
                             .trim()
-
-                        android.util.Log.d("JARVIS_AI", "AI: $aiReply")
                         speak(aiReply, "AI_REPLY")
                     } catch (e: Exception) {
-                        android.util.Log.e("JARVIS_AI", "Parse: ${e.message}")
                         speak("Sorry Sir, samajh nahi paya.", "AI_ERROR")
                     }
                 },
@@ -605,7 +560,6 @@ class AssistantService : Service() {
                         error.networkResponse != null -> "HTTP ${error.networkResponse.statusCode}"
                         else -> error.message ?: "Unknown"
                     }
-                    android.util.Log.e("JARVIS_AI", "API ERROR: $errMsg")
                     speak("Sorry Sir, connect nahi ho paya.", "AI_NETWORK_ERROR")
                 }
             ) {
@@ -617,10 +571,8 @@ class AssistantService : Service() {
                     return headers
                 }
             }
-
             requestQueue.add(request)
         } catch (e: Exception) {
-            android.util.Log.e("JARVIS_AI", "askGroqAI error: ${e.message}")
             speak("Sorry Sir, kuch problem hai.", "AI_ERROR")
         }
     }
@@ -660,6 +612,5 @@ class AssistantService : Service() {
         try { textToSpeech.stop() } catch (_: Exception) {}
         try { textToSpeech.shutdown() } catch (_: Exception) {}
         try { unregisterReceiver(CallReceiver.instance) } catch (_: Exception) {}
-        android.util.Log.d("JARVIS_DEBUG", "Service destroyed")
     }
 }
