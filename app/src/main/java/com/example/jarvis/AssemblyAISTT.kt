@@ -21,7 +21,6 @@ class AssemblyAISTT(private val context: Context) {
     private var webSocket: WebSocket? = null
     private var audioRecord: AudioRecord? = null
     private var isRecording = false
-    private var isPaused = false
     private var recordingThread: Thread? = null
     private val handler = Handler(Looper.getMainLooper())
 
@@ -38,25 +37,15 @@ class AssemblyAISTT(private val context: Context) {
         fetchTokenAndConnect()
     }
 
+    // ✅ No-op - mic always listens (barge-in ke liye)
     fun pauseStreaming() {
-        isPaused = true
-        try { audioRecord?.stop() } catch (_: Exception) {}
-        Log.d("JARVIS_STT", "Streaming paused")
+        // No-op
     }
 
     fun resumeStreaming() {
-        isPaused = false
-        try {
-            audioRecord?.startRecording()
-            Log.d("JARVIS_STT", "Streaming resumed")
-        } catch (e: Exception) {
-            Log.e("JARVIS_STT", "Resume failed: ${e.message}")
-        }
+        // No-op
     }
 
-    // =====================================================
-    // STEP 1: Token Fetch
-    // =====================================================
     private fun fetchTokenAndConnect() {
         val client = OkHttpClient()
         val url = "https://streaming.assemblyai.com/v3/token?expires_in_seconds=300"
@@ -69,7 +58,6 @@ class AssemblyAISTT(private val context: Context) {
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                Log.e("JARVIS_STT", "Token fetch failed: ${e.message}")
                 handler.post {
                     Toast.makeText(context, "Token Error: ${e.message}", Toast.LENGTH_LONG).show()
                 }
@@ -81,21 +69,15 @@ class AssemblyAISTT(private val context: Context) {
                         val responseBody = response.body?.string() ?: ""
                         val token = JsonParser.parseString(responseBody)
                             .asJsonObject.get("token").asString
-                        Log.d("JARVIS_STT", "Token fetched")
                         connectWebSocket(token)
                     } catch (e: Exception) {
-                        Log.e("JARVIS_STT", "Token parse error: ${e.message}")
+                        Log.e("JARVIS_STT", "Token parse: ${e.message}")
                     }
-                } else {
-                    Log.e("JARVIS_STT", "Token API failed: ${response.code}")
                 }
             }
         })
     }
 
-    // =====================================================
-    // STEP 2: WebSocket Connect
-    // =====================================================
     private fun connectWebSocket(token: String) {
         try {
             val client = OkHttpClient.Builder()
@@ -112,10 +94,7 @@ class AssemblyAISTT(private val context: Context) {
 
             webSocket = client.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
-                    Log.d("JARVIS_STT", "WebSocket Connected")
-                    handler.post {
-                        Toast.makeText(context, "AssemblyAI Connected!", Toast.LENGTH_SHORT).show()
-                    }
+                    Log.d("JARVIS_STT", "Connected")
                     startAudioStreaming()
                 }
 
@@ -128,20 +107,14 @@ class AssemblyAISTT(private val context: Context) {
                         if (type == "Turn" && transcript.isNotBlank()) {
                             val isFinal = json.get("end_of_turn")?.asBoolean ?: false
                             handler.post { listener?.onTranscript(transcript, isFinal) }
-                        } else if (type == "Begin") {
-                            Log.d("JARVIS_STT", "Session began")
                         }
                     } catch (e: Exception) {
-                        Log.e("JARVIS_STT", "Parse error: ${e.message}")
+                        Log.e("JARVIS_STT", "Parse: ${e.message}")
                     }
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    val code = response?.code ?: 0
-                    Log.e("JARVIS_STT", "WS failed: ${t.message} | Code: $code")
-                    handler.post {
-                        listener?.onError(t.message ?: "Connection failed")
-                    }
+                    handler.post { listener?.onError(t.message ?: "Connection failed") }
                 }
             })
             isRecording = true
@@ -150,9 +123,6 @@ class AssemblyAISTT(private val context: Context) {
         }
     }
 
-    // =====================================================
-    // STEP 3: Audio Streaming with Volume Boost (2x)
-    // =====================================================
     @SuppressLint("MissingPermission")
     private fun startAudioStreaming() {
         val sampleRate = 16000
@@ -163,8 +133,9 @@ class AssemblyAISTT(private val context: Context) {
         )
 
         try {
+            // ✅ VOICE_COMMUNICATION = AEC built-in (echo cancel)
             audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
                 sampleRate,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
@@ -177,27 +148,22 @@ class AssemblyAISTT(private val context: Context) {
             }
 
             audioRecord?.startRecording()
-            Log.d("JARVIS_STT", "Audio streaming started")
+            Log.d("JARVIS_STT", "Audio streaming started (AEC on)")
 
             recordingThread = Thread {
                 val chunkSize = 1600
                 val buffer = ByteArray(chunkSize)
                 while (isRecording) {
-                    if (isPaused) {
-                        Thread.sleep(50)
-                        continue
-                    }
-
                     val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
                     if (read > 0) {
-                        // ✅ Volume Boost 2x
+                        // 2x boost
                         val amplified = ByteArray(read)
                         for (i in 0 until read step 2) {
                             if (i + 1 < read) {
                                 var sample = ((buffer[i + 1].toInt() and 0xFF) shl 8) or
                                         (buffer[i].toInt() and 0xFF)
                                 if (sample > 32767) sample -= 65536
-                                sample = (sample * 3).coerceIn(-32768, 32767)
+                                sample = (sample * 2).coerceIn(-32768, 32767)
                                 amplified[i] = (sample and 0xFF).toByte()
                                 amplified[i + 1] = ((sample shr 8) and 0xFF).toByte()
                             }
@@ -209,7 +175,7 @@ class AssemblyAISTT(private val context: Context) {
             recordingThread?.start()
 
         } catch (e: Exception) {
-            Log.e("JARVIS_STT", "Audio start error: ${e.message}")
+            Log.e("JARVIS_STT", "Audio error: ${e.message}")
         }
     }
 
@@ -218,7 +184,6 @@ class AssemblyAISTT(private val context: Context) {
         try { recordingThread?.join(1000); recordingThread = null } catch (_: Exception) {}
         try { audioRecord?.stop(); audioRecord?.release(); audioRecord = null } catch (_: Exception) {}
         try { webSocket?.close(1000, "Closing"); webSocket = null } catch (_: Exception) {}
-        Log.d("JARVIS_STT", "Stopped")
     }
 
     fun isListening(): Boolean = isRecording
