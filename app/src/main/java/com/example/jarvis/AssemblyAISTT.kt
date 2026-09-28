@@ -164,7 +164,7 @@ class AssemblyAISTT(private val context: Context) {
 
         try {
             audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
                 sampleRate,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
@@ -197,7 +197,7 @@ class AssemblyAISTT(private val context: Context) {
                                 var sample = ((buffer[i + 1].toInt() and 0xFF) shl 8) or
                                         (buffer[i].toInt() and 0xFF)
                                 if (sample > 32767) sample -= 65536
-                                sample = (sample * 2).coerceIn(-32768, 32767)
+                                sample = (sample * 3).coerceIn(-32768, 32767)
                                 amplified[i] = (sample and 0xFF).toByte()
                                 amplified[i + 1] = ((sample shr 8) and 0xFF).toByte()
                             }
