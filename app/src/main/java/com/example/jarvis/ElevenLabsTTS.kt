@@ -5,6 +5,7 @@ import android.media.MediaPlayer
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.widget.Toast
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -17,7 +18,7 @@ class ElevenLabsTTS(private val context: Context) {
     // ⚠️ YAHAN APNI ELEVENLABS API KEY PASTE KAR
     private val API_KEY = "sk_f613c599d81c6d9fdc366d5ad8bb9743932767d26c5a5341"
 
-    // Voice ID - Rachel (ChatGPT jaisi). Agar Indian female chahiye toh change kar
+    // Voice ID - Rachel (ChatGPT jaisi). Indian female ke liye change kar
     private val VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
 
     private var mediaPlayer: MediaPlayer? = null
@@ -72,13 +73,28 @@ class ElevenLabsTTS(private val context: Context) {
         OkHttpClient().newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 isSpeaking = false
-                handler.post { listener?.onError(e.message ?: "Network error") }
+                handler.post {
+                    Toast.makeText(
+                        context,
+                        "TTS Fail: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    listener?.onError(e.message ?: "Network error")
+                }
             }
 
             override fun onResponse(call: Call, response: Response) {
                 if (!response.isSuccessful) {
                     isSpeaking = false
-                    handler.post { listener?.onError("HTTP ${response.code}") }
+                    val errBody = try { response.body?.string() ?: "" } catch (_: Exception) { "" }
+                    handler.post {
+                        Toast.makeText(
+                            context,
+                            "TTS ${response.code}: $errBody",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        listener?.onError("HTTP ${response.code}")
+                    }
                     return
                 }
 
@@ -106,12 +122,24 @@ class ElevenLabsTTS(private val context: Context) {
                             }
                         } catch (e: Exception) {
                             isSpeaking = false
+                            Toast.makeText(
+                                context,
+                                "Playback Error: ${e.message}",
+                                Toast.LENGTH_LONG
+                            ).show()
                             listener?.onError("Playback: ${e.message}")
                         }
                     }
                 } catch (e: Exception) {
                     isSpeaking = false
-                    handler.post { listener?.onError("Parse: ${e.message}") }
+                    handler.post {
+                        Toast.makeText(
+                            context,
+                            "Parse Error: ${e.message}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        listener?.onError("Parse: ${e.message}")
+                    }
                 }
             }
         })
