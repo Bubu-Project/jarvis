@@ -38,14 +38,12 @@ class AssemblyAISTT(private val context: Context) {
         fetchTokenAndConnect()
     }
 
-    // ✅ TTS ke time mic pause karne ke liye
     fun pauseStreaming() {
         isPaused = true
         try { audioRecord?.stop() } catch (_: Exception) {}
         Log.d("JARVIS_STT", "Streaming paused")
     }
 
-    // ✅ TTS ke baad mic resume karne ke liye
     fun resumeStreaming() {
         isPaused = false
         try {
@@ -153,7 +151,7 @@ class AssemblyAISTT(private val context: Context) {
     }
 
     // =====================================================
-    // STEP 3: Audio Streaming
+    // STEP 3: Audio Streaming with Volume Boost (2x)
     // =====================================================
     @SuppressLint("MissingPermission")
     private fun startAudioStreaming() {
@@ -192,8 +190,19 @@ class AssemblyAISTT(private val context: Context) {
 
                     val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
                     if (read > 0) {
-                        val audioBytes = buffer.copyOf(read)
-                        webSocket?.send(audioBytes.toByteString())
+                        // ✅ Volume Boost 2x
+                        val amplified = ByteArray(read)
+                        for (i in 0 until read step 2) {
+                            if (i + 1 < read) {
+                                var sample = ((buffer[i + 1].toInt() and 0xFF) shl 8) or
+                                        (buffer[i].toInt() and 0xFF)
+                                if (sample > 32767) sample -= 65536
+                                sample = (sample * 2).coerceIn(-32768, 32767)
+                                amplified[i] = (sample and 0xFF).toByte()
+                                amplified[i + 1] = ((sample shr 8) and 0xFF).toByte()
+                            }
+                        }
+                        webSocket?.send(amplified.toByteString())
                     }
                 }
             }
