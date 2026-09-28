@@ -50,7 +50,7 @@ class AssistantService : Service() {
     private var pendingCallName: String? = null
     private var lastProcessedText = ""
 
-    // ✅ NAYA: Conversation Memory
+    // Conversation Memory
     private val conversationHistory = JSONArray()
 
     private val wakeTimeout = Runnable {
@@ -151,7 +151,6 @@ class AssistantService : Service() {
                         ttsReady = result != TextToSpeech.LANG_MISSING_DATA &&
                                 result != TextToSpeech.LANG_NOT_SUPPORTED
 
-                        // Natural sounding settings
                         textToSpeech.setSpeechRate(0.85f)
                         textToSpeech.setPitch(1.05f)
 
@@ -168,7 +167,6 @@ class AssistantService : Service() {
         }
     }
 
-    // ✅ NAYA: Saari available voices log karo (debug ke liye)
     private fun logAllVoices() {
         try {
             val voices = textToSpeech.voices ?: return
@@ -187,18 +185,15 @@ class AssistantService : Service() {
         }
     }
 
-    // ✅ NAYA: Best Indian voice (female ya male dono)
     private fun selectBestIndianVoice() {
         try {
             val voices = textToSpeech.voices ?: return
 
-            // Indian names (female + male)
             val indianNames = listOf(
                 "veena", "raveena", "heera", "priya", "aditi", "kavya",
                 "rishi", "ravi", "arjun", "vikram", "hindi", "india"
             )
 
-            // Female names (agar Indian nahi mili toh)
             val femaleNames = listOf(
                 "female", "-f-", "samantha", "victoria", "karen",
                 "moira", "tessa", "fiona", "susan", "allison", "ava",
@@ -215,21 +210,16 @@ class AssistantService : Service() {
 
                 var score = 0
 
-                // Indian locale priority
                 if (voice.locale.country == "IN") score += 200
                 if (voice.locale.country == "GB") score += 50
                 if (voice.locale.country == "US") score += 30
 
-                // Indian name priority
                 if (indianNames.any { voice.name.contains(it, true) }) score += 150
 
-                // Female preference (light)
                 if (femaleNames.any { voice.name.contains(it, true) }) score += 30
 
-                // Male penalty (kam)
                 if (maleNames.any { voice.name.contains(it, true) }) score -= 10
 
-                // High quality bonus
                 if (voice.quality >= android.speech.tts.Voice.QUALITY_HIGH) score += 40
                 if (voice.quality >= android.speech.tts.Voice.QUALITY_VERY_HIGH) score += 80
 
@@ -316,7 +306,7 @@ class AssistantService : Service() {
             if (exitWords.any { lowerText.contains(it) }) {
                 isConversationMode = false
                 conversationTimeout?.let { handler.removeCallbacks(it) }
-                conversationHistory.clear() // ✅ Memory clear
+                clearConversationHistory()
                 speak("Theek hai Sir, main chup ho jaati hoon.", "CONVERSATION_END")
                 return
             }
@@ -356,7 +346,7 @@ class AssistantService : Service() {
                 handler.removeCallbacks(wakeTimeout)
                 handler.postDelayed(wakeTimeout, 10000)
                 resetConversationTimeout()
-                conversationHistory.clear() // ✅ Naya session
+                clearConversationHistory()
                 speak("Haan Sir, boliye. Main sun rahi hoon.", "WAKE_UP")
             } else {
                 isConversationMode = true
@@ -373,13 +363,25 @@ class AssistantService : Service() {
             val timeout = Runnable {
                 if (isConversationMode) {
                     isConversationMode = false
-                    conversationHistory.clear() // ✅ Timeout pe memory clear
+                    clearConversationHistory()
                     android.util.Log.d("JARVIS_CONV", "Timeout - memory cleared")
                 }
             }
             conversationTimeout = timeout
-            handler.postDelayed(timeout, 120000) // 2 minute
+            handler.postDelayed(timeout, 120000)
         } catch (_: Exception) {}
+    }
+
+    // ✅ NAYA: History clear karne ka safe function
+    private fun clearConversationHistory() {
+        try {
+            while (conversationHistory.length() > 0) {
+                conversationHistory.remove(0)
+            }
+            android.util.Log.d("JARVIS_MEM", "History cleared")
+        } catch (e: Exception) {
+            android.util.Log.e("JARVIS_MEM", "Clear error: ${e.message}")
+        }
     }
 
     // =====================================================
@@ -555,7 +557,6 @@ class AssistantService : Service() {
 
             val messages = JSONArray()
 
-            // System prompt
             messages.put(JSONObject().apply {
                 put("role", "system")
                 put("content", "You are Jarvis, a smart, witty and friendly AI assistant for an Indian user. " +
@@ -570,12 +571,10 @@ class AssistantService : Service() {
                         "8. If user asks to teach English, be a patient teacher.")
             })
 
-            // ✅ Conversation history add karo
             for (i in 0 until conversationHistory.length()) {
                 messages.put(conversationHistory.getJSONObject(i))
             }
 
-            // Current question
             messages.put(JSONObject().apply {
                 put("role", "user")
                 put("content", question)
@@ -602,7 +601,6 @@ class AssistantService : Service() {
                         android.util.Log.d("JARVIS_AI", "User: $question")
                         android.util.Log.d("JARVIS_AI", "AI: $aiReply")
 
-                        // ✅ Memory mein add karo
                         addToHistory("user", question)
                         addToHistory("assistant", aiReply)
 
@@ -634,7 +632,6 @@ class AssistantService : Service() {
         }
     }
 
-    // ✅ NAYA: History add karne ka function
     private fun addToHistory(role: String, content: String) {
         try {
             conversationHistory.put(JSONObject().apply {
@@ -642,7 +639,6 @@ class AssistantService : Service() {
                 put("content", content)
             })
 
-            // Sirf last 20 messages rakho (10 pairs) - token limit ke liye
             while (conversationHistory.length() > 20) {
                 conversationHistory.remove(0)
             }
@@ -684,7 +680,7 @@ class AssistantService : Service() {
         isListeningActive = false
         conversationTimeout?.let { handler.removeCallbacks(it) }
         handler.removeCallbacksAndMessages(null)
-        conversationHistory.clear()
+        clearConversationHistory()
         try { assemblyAISTT.stopListening() } catch (_: Exception) {}
         try { textToSpeech.stop() } catch (_: Exception) {}
         try { textToSpeech.shutdown() } catch (_: Exception) {}
