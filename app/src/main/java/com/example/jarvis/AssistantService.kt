@@ -41,18 +41,18 @@ class AssistantService : Service() {
     private var isSpeaking = false
     private var isAwake = false
     private var isConversationMode = false
+    private var isProcessing = false
     private var conversationTimeout: Runnable? = null
     private var isWaitingForCallResponse = false
     private var pendingCallName: String? = null
     private var lastProcessedText = ""
+    private var lastProcessedTime = 0L
 
-    // ✅ Conversation Memory - 30 messages (15 pairs)
     private val conversationHistory = JSONArray()
     private val MAX_HISTORY = 30
 
     private val wakeTimeout = Runnable {
         isAwake = false
-        isConversationMode = false
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -91,7 +91,7 @@ class AssistantService : Service() {
             setupAssemblyAI()
             isListeningActive = true
         } catch (e: Exception) {
-            android.util.Log.e("JARVIS_DEBUG", "CRASH in onCreate: ${e.message}")
+            android.util.Log.e("JARVIS_DEBUG", "CRASH: ${e.message}")
         }
     }
 
@@ -105,36 +105,24 @@ class AssistantService : Service() {
                 override fun onStart() {
                     handler.post {
                         isSpeaking = true
-                        try { assemblyAISTT.pauseStreaming() } catch (_: Exception) {}
                     }
                 }
 
                 override fun onDone() {
                     handler.post {
                         isSpeaking = false
-                        // ✅ Conversation mode mein text clear nahi karna (memory ke liye)
-                        if (!isConversationMode) {
-                            lastProcessedText = ""
-                        }
-                        // ✅ 600ms baad mic resume - natural gap
+                        // ✅ lastProcessedText clear kar 1.5 sec baad
                         handler.postDelayed({
                             if (!isSpeaking) {
-                                try { assemblyAISTT.resumeStreaming() } catch (_: Exception) {}
+                                lastProcessedText = ""
                             }
-                        }, 600)
+                        }, 1500)
                     }
                 }
 
                 override fun onError(message: String) {
-                    android.util.Log.e("JARVIS_TTS", "Error: $message")
                     handler.post {
                         isSpeaking = false
-                        lastProcessedText = ""
-                        handler.postDelayed({
-                            if (!isSpeaking) {
-                                try { assemblyAISTT.resumeStreaming() } catch (_: Exception) {}
-                            }
-                        }, 600)
                     }
                 }
             })
@@ -175,53 +163,67 @@ class AssistantService : Service() {
         }
     }
 
+    // =====================================================
+    // ✅ BARGE-IN SUPPORT
+    // =====================================================
     private fun handleTranscript(text: String, isFinal: Boolean) {
         val cleanText = text.lowercase(Locale.US).trim()
         if (cleanText.isBlank()) return
-        if (isSpeaking) return
         if (!isFinal) return
 
-        // ✅ Duplicate check - sirf 2 second ke andar wale duplicates block karo
-        if (cleanText == lastProcessedText) return
+        // ✅ Duplicate check with 1.5 sec window
+        val now = System.currentTimeMillis()
+        if (cleanText == lastProcessedText && (now - lastProcessedTime) < 1500) return
+
+        android.util.Log.d("JARVIS_STT", "Final: $cleanText")
+
+        // ✅ BARGE-IN: Jarvis bol rahi hai aur user boli → Jarvis ko rok do
+        if (isSpeaking) {
+            android.util.Log.d("JARVIS_BARGEIN", "User interrupted!")
+            try { elevenTTS.stop() } catch (_: Exception) {}
+            isSpeaking = false
+        }
+
+        // ✅ Processing guard
+        if (isProcessing) return
+        isProcessing = true
 
         lastProcessedText = cleanText
+        lastProcessedTime = now
+
         handleSpeech(cleanText)
+
+        handler.postDelayed({ isProcessing = false }, 500)
     }
 
     // =====================================================
     // SPEECH HANDLER
     // =====================================================
     private fun handleSpeech(text: String) {
+        // ✅ Exit words - kabhi bhi kaam karein
+        val lowerText = text.lowercase().trim()
+        val exitWords = listOf(
+            "stop", "band karo", "shut down", "goodbye", "bye bye",
+            "chup", "chup ho jao", "bas", "ruko", "mat suno",
+            "conversation band", "exit", "quit", "end conversation",
+            "naya topic", "reset", "shant ho jao", "chhodo"
+        )
+        if (isConversationMode && exitWords.any { lowerText == it || lowerText.contains("$it ") || lowerText.contains(" $it") }) {
+            isConversationMode = false
+            conversationTimeout?.let { handler.removeCallbacks(it) }
+            clearConversationHistory()
+            speak("Theek hai Sir, main chup ho jaati hoon.", "CONVERSATION_END")
+            return
+        }
+
+        // Conversation mode - sab kuch process karo
         if (isConversationMode) {
-            val lowerText = text.lowercase().trim()
-
-            // Exit words
-            val exitWords = listOf(
-                "stop", "band karo", "shut down", "goodbye", "bye",
-                "chup", "chup ho jao", "bas", "ruko", "mat suno",
-                "conversation band", "exit", "quit", "end conversation",
-                "naya topic", "reset", "shant ho jao"
-            )
-            if (exitWords.any { lowerText.contains(it) }) {
-                isConversationMode = false
-                conversationTimeout?.let { handler.removeCallbacks(it) }
-                clearConversationHistory()
-                speak("Theek hai Sir, main chup ho jaati hoon.", "CONVERSATION_END")
-                return
-            }
-
-            // Noise filter - sirf chhote noise ignore karo
-            val words = lowerText.split(" ").filter { it.isNotBlank() }
-            if (words.size < 1) {
-                resetConversationTimeout()
-                return
-            }
-
             resetConversationTimeout()
             executeVoiceCommand(text)
             return
         }
 
+        // Wake word mode
         if (isAwake) {
             isAwake = false
             handler.removeCallbacks(wakeTimeout)
@@ -255,8 +257,7 @@ class AssistantService : Service() {
             val timeout = Runnable {
                 if (isConversationMode) {
                     isConversationMode = false
-                    // ✅ Timeout pe memory clear nahi karo (context ke liye)
-                    android.util.Log.d("JARVIS_CONV", "Timeout - conversation ended")
+                    android.util.Log.d("JARVIS_CONV", "Timeout - back to wake word")
                 }
             }
             conversationTimeout = timeout
@@ -301,7 +302,7 @@ class AssistantService : Service() {
             )
             registerReceiver(receiver, filter)
         } catch (e: Exception) {
-            android.util.Log.e("JARVIS_CALL", "Receiver setup failed: ${e.message}")
+            android.util.Log.e("JARVIS_CALL", "Receiver: ${e.message}")
         }
     }
 
@@ -344,8 +345,7 @@ class AssistantService : Service() {
         when {
             isWaitingForCallResponse && (
                 cmd.contains("haan") || cmd.contains("yes") || cmd.contains("uthao") ||
-                cmd.contains("utha") || cmd.contains("answer") || cmd.contains("pick") ||
-                cmd.contains("lo") || cmd.contains("attend") || cmd.contains("le lo")
+                cmd.contains("utha") || cmd.contains("answer") || cmd.contains("pick")
             ) -> {
                 isWaitingForCallResponse = false
                 actionExecutor.answerCall()
@@ -356,7 +356,7 @@ class AssistantService : Service() {
             isWaitingForCallResponse && (
                 cmd.contains("nahi") || cmd.contains("no") || cmd.contains("reject") ||
                 cmd.contains("kato") || cmd.contains("kat") || cmd.contains("cut") ||
-                cmd.contains("band") || cmd.contains("mat") || cmd.contains("chhod")
+                cmd.contains("mat") || cmd.contains("chhod")
             ) -> {
                 isWaitingForCallResponse = false
                 actionExecutor.rejectCall()
@@ -437,40 +437,33 @@ class AssistantService : Service() {
     }
 
     // =====================================================
-    // GROQ AI - WITH FULL CONVERSATION MEMORY
+    // GROQ AI
     // =====================================================
     private fun askGroqAI(question: String) {
         try {
             val url = "https://api.groq.com/openai/v1/chat/completions"
             val messages = JSONArray()
 
-            // System prompt
             messages.put(JSONObject().apply {
                 put("role", "system")
                 put("content", "You are Jarvis, a smart, witty and friendly AI assistant for an Indian user. " +
-        "RULES: " +
-        "1. Always reply in HINGLISH (Hindi + English mixed) using ROMAN script only. " +
-        "2. Address the user as 'Sir' always. " +
-        "3. Keep replies SHORT - max 2-3 sentences. " +
-        "4. Be warm, sweet, and helpful like a close friend. " +
-        "5. NEVER use Devanagari script - only Roman letters. " +
-        "6. No markdown, no bullet points, no special symbols - just plain speech. " +
-        "7. You have FULL MEMORY of this conversation. Remember names, facts, and context. " +
-        "8. If user asks to teach English, be a patient teacher. " +
-        "9. Be conversational - sometimes ask follow-up questions. " +
-        "10. If user says something personal (name, mood), remember it. " +
-        "11. IMPORTANT: User's voice is converted to text by speech recognition. Sometimes words may be misspelled or phonetically wrong (e.g., 'Rajdhani' might be 'Rajdhni', 'capital' might be 'kaptal'). " +
-        "12. ALWAYS try to understand the INTENT from context, even if words are wrong. Silently correct the mistakes and respond to what user MEANT. " +
-        "13. If a word seems completely wrong, ask user politely: 'Sir, aapne kya kaha? Dobara boliye.' " +
-        "14. Never mention that user's words were wrong - just respond naturally.")
+                        "RULES: " +
+                        "1. Always reply in HINGLISH (Hindi + English mixed) using ROMAN script only. " +
+                        "2. Address the user as 'Sir' always. " +
+                        "3. Keep replies SHORT - max 2-3 sentences. " +
+                        "4. Be warm, sweet, and helpful like a close friend. " +
+                        "5. NEVER use Devanagari script - only Roman letters. " +
+                        "6. No markdown, no bullet points - just plain speech. " +
+                        "7. You have FULL MEMORY of this conversation. " +
+                        "8. If user asks to teach English, be a patient teacher. " +
+                        "9. Be conversational - sometimes ask follow-up questions. " +
+                        "10. Voice is converted to text - user's words may be misspelled. Understand the INTENT and respond naturally.")
             })
 
-            // ✅ Full conversation history
             for (i in 0 until conversationHistory.length()) {
                 messages.put(conversationHistory.getJSONObject(i))
             }
 
-            // Current question
             messages.put(JSONObject().apply {
                 put("role", "user")
                 put("content", question)
@@ -494,25 +487,14 @@ class AssistantService : Service() {
                             .getString("content")
                             .trim()
 
-                        android.util.Log.d("JARVIS_AI", "User: $question")
-                        android.util.Log.d("JARVIS_AI", "AI: $aiReply")
-
-                        // ✅ Add to memory
                         addToHistory("user", question)
                         addToHistory("assistant", aiReply)
-
                         speak(aiReply, "AI_REPLY")
                     } catch (e: Exception) {
-                        android.util.Log.e("JARVIS_AI", "Parse: ${e.message}")
                         speak("Sorry Sir, samajh nahi paya.", "AI_ERROR")
                     }
                 },
                 { error ->
-                    val errMsg = when {
-                        error.networkResponse != null -> "HTTP ${error.networkResponse.statusCode}"
-                        else -> error.message ?: "Unknown"
-                    }
-                    android.util.Log.e("JARVIS_AI", "API ERROR: $errMsg")
                     speak("Sorry Sir, connect nahi ho paya.", "AI_NETWORK_ERROR")
                 }
             ) {
@@ -526,7 +508,6 @@ class AssistantService : Service() {
             }
             requestQueue.add(request)
         } catch (e: Exception) {
-            android.util.Log.e("JARVIS_AI", "askGroqAI error: ${e.message}")
             speak("Sorry Sir, kuch problem hai.", "AI_ERROR")
         }
     }
@@ -537,16 +518,10 @@ class AssistantService : Service() {
                 put("role", role)
                 put("content", content)
             })
-
-            // ✅ Purane messages trim karo (30 se zyada na ho)
             while (conversationHistory.length() > MAX_HISTORY) {
                 conversationHistory.remove(0)
             }
-
-            android.util.Log.d("JARVIS_MEM", "History: ${conversationHistory.length()} messages")
-        } catch (e: Exception) {
-            android.util.Log.e("JARVIS_MEM", "Add error: ${e.message}")
-        }
+        } catch (_: Exception) {}
     }
 
     // =====================================================
@@ -572,9 +547,6 @@ class AssistantService : Service() {
         startForeground(1, notification)
     }
 
-    // =====================================================
-    // DESTROY
-    // =====================================================
     override fun onDestroy() {
         super.onDestroy()
         isListeningActive = false
