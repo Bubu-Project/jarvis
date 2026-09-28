@@ -19,7 +19,7 @@ class ElevenLabsTTS(private val context: Context) {
     private val API_KEY = "sk_f613c599d81c6d9fdc366d5ad8bb9743932767d26c5a5341"
 
     // Voice ID - Rachel (ChatGPT jaisi). Indian female ke liye change kar
-    private val VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
+    private val VOICE_ID = "qa4ELBU5XyWKwHXpLXb9"
 
     private var mediaPlayer: MediaPlayer? = null
     private val handler = Handler(Looper.getMainLooper())
