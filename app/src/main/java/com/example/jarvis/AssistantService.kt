@@ -10,13 +10,10 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
 import android.os.Build
-import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
-import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
 import androidx.core.app.NotificationCompat
 import com.android.volley.AuthFailureError
 import com.android.volley.Request
@@ -30,7 +27,7 @@ import java.util.Locale
 class AssistantService : Service() {
 
     private lateinit var assemblyAISTT: AssemblyAISTT
-    private lateinit var textToSpeech: TextToSpeech
+    private lateinit var elevenTTS: ElevenLabsTTS
     private lateinit var audioManager: AudioManager
     private lateinit var actionExecutor: ActionExecutor
     private lateinit var requestQueue: RequestQueue
@@ -43,14 +40,12 @@ class AssistantService : Service() {
     private var isListeningActive = false
     private var isSpeaking = false
     private var isAwake = false
-    private var ttsReady = false
     private var isConversationMode = false
     private var conversationTimeout: Runnable? = null
     private var isWaitingForCallResponse = false
     private var pendingCallName: String? = null
     private var lastProcessedText = ""
 
-    // Conversation Memory
     private val conversationHistory = JSONArray()
 
     private val wakeTimeout = Runnable {
@@ -89,7 +84,7 @@ class AssistantService : Service() {
             actionExecutor = ActionExecutor(this)
             requestQueue = Volley.newRequestQueue(this)
             createNotification()
-            setupTTS()
+            setupElevenTTS()
             setupCallReceiver()
             setupAssemblyAI()
             isListeningActive = true
@@ -98,6 +93,58 @@ class AssistantService : Service() {
         }
     }
 
+    // =====================================================
+    // ELEVENLABS TTS SETUP
+    // =====================================================
+    private fun setupElevenTTS() {
+        try {
+            elevenTTS = ElevenLabsTTS(this)
+            elevenTTS.setListener(object : ElevenLabsTTS.TTSListener {
+                override fun onStart() {
+                    handler.post {
+                        isSpeaking = true
+                        try { assemblyAISTT.pauseStreaming() } catch (_: Exception) {}
+                    }
+                }
+
+                override fun onDone() {
+                    handler.post {
+                        isSpeaking = false
+                        lastProcessedText = ""
+                        handler.postDelayed({
+                            if (!isSpeaking) {
+                                try { assemblyAISTT.resumeStreaming() } catch (_: Exception) {}
+                            }
+                        }, 500)
+                    }
+                }
+
+                override fun onError(message: String) {
+                    android.util.Log.e("JARVIS_TTS", "Error: $message")
+                    handler.post {
+                        isSpeaking = false
+                        lastProcessedText = ""
+                        try { assemblyAISTT.resumeStreaming() } catch (_: Exception) {}
+                    }
+                }
+            })
+            android.util.Log.d("JARVIS_TTS", "ElevenLabs TTS initialized")
+        } catch (e: Exception) {
+            android.util.Log.e("JARVIS_TTS", "Setup failed: ${e.message}")
+        }
+    }
+
+    private fun speak(text: String, id: String) {
+        handler.post {
+            try { elevenTTS.speak(text) } catch (e: Exception) {
+                android.util.Log.e("JARVIS_TTS", "Speak failed: ${e.message}")
+            }
+        }
+    }
+
+    // =====================================================
+    // ASSEMBLYAI SETUP
+    // =====================================================
     private fun setupAssemblyAI() {
         try {
             assemblyAISTT = AssemblyAISTT(this)
@@ -128,167 +175,6 @@ class AssistantService : Service() {
 
         lastProcessedText = cleanText
         handleSpeech(cleanText)
-    }
-
-    // =====================================================
-    // TTS - Indian Voice Priority
-    // =====================================================
-    private fun setupTTS() {
-        try {
-            textToSpeech = TextToSpeech(this) { status ->
-                if (status == TextToSpeech.SUCCESS) {
-                    try {
-                        var result = textToSpeech.setLanguage(Locale("en", "IN"))
-                        if (result == TextToSpeech.LANG_MISSING_DATA ||
-                            result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                            result = textToSpeech.setLanguage(Locale.UK)
-                        }
-                        if (result == TextToSpeech.LANG_MISSING_DATA ||
-                            result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                            result = textToSpeech.setLanguage(Locale.US)
-                        }
-
-                        ttsReady = result != TextToSpeech.LANG_MISSING_DATA &&
-                                result != TextToSpeech.LANG_NOT_SUPPORTED
-
-                        textToSpeech.setSpeechRate(0.85f)
-                        textToSpeech.setPitch(1.05f)
-
-                        logAllVoices()
-                        selectBestIndianVoice()
-                        setupTTSListener()
-                    } catch (e: Exception) {
-                        android.util.Log.e("JARVIS_TTS", "TTS setup error: ${e.message}")
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("JARVIS_TTS", "TTS init error: ${e.message}")
-        }
-    }
-
-    private fun logAllVoices() {
-        try {
-            val voices = textToSpeech.voices ?: return
-            android.util.Log.d("JARVIS_TTS", "=== AVAILABLE VOICES ===")
-            for (voice in voices) {
-                if (voice.locale.language == "en") {
-                    android.util.Log.d(
-                        "JARVIS_TTS",
-                        "Voice: ${voice.name} | Locale: ${voice.locale} | Quality: ${voice.quality}"
-                    )
-                }
-            }
-            android.util.Log.d("JARVIS_TTS", "=== END VOICES ===")
-        } catch (e: Exception) {
-            android.util.Log.e("JARVIS_TTS", "Log voices error: ${e.message}")
-        }
-    }
-
-    private fun selectBestIndianVoice() {
-        try {
-            val voices = textToSpeech.voices ?: return
-
-            val indianNames = listOf(
-                "veena", "raveena", "heera", "priya", "aditi", "kavya",
-                "rishi", "ravi", "arjun", "vikram", "hindi", "india"
-            )
-
-            val femaleNames = listOf(
-                "female", "-f-", "samantha", "victoria", "karen",
-                "moira", "tessa", "fiona", "susan", "allison", "ava",
-                "amelie", "joanna", "salli", "kendra", "kimberly"
-            )
-
-            val maleNames = listOf("male", "-m-", "daniel", "alex", "fred", "oliver", "thomas")
-
-            var bestVoice: android.speech.tts.Voice? = null
-            var bestScore = -1
-
-            for (voice in voices) {
-                if (voice.locale.language != "en") continue
-
-                var score = 0
-
-                if (voice.locale.country == "IN") score += 200
-                if (voice.locale.country == "GB") score += 50
-                if (voice.locale.country == "US") score += 30
-
-                if (indianNames.any { voice.name.contains(it, true) }) score += 150
-
-                if (femaleNames.any { voice.name.contains(it, true) }) score += 30
-
-                if (maleNames.any { voice.name.contains(it, true) }) score -= 10
-
-                if (voice.quality >= android.speech.tts.Voice.QUALITY_HIGH) score += 40
-                if (voice.quality >= android.speech.tts.Voice.QUALITY_VERY_HIGH) score += 80
-
-                if (score > bestScore) {
-                    bestScore = score
-                    bestVoice = voice
-                }
-            }
-
-            if (bestVoice != null) {
-                textToSpeech.voice = bestVoice
-                android.util.Log.d(
-                    "JARVIS_TTS",
-                    "SELECTED: ${bestVoice.name} | Locale: ${bestVoice.locale} | Score: $bestScore"
-                )
-            } else {
-                android.util.Log.e("JARVIS_TTS", "No suitable voice found")
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("JARVIS_TTS", "Voice selection error: ${e.message}")
-        }
-    }
-
-    private fun setupTTSListener() {
-        textToSpeech.setOnUtteranceProgressListener(
-            object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) {
-                    handler.post { isSpeaking = true }
-                }
-
-                override fun onDone(utteranceId: String?) {
-                    handler.post {
-                        isSpeaking = false
-                        lastProcessedText = ""
-                        handler.postDelayed({
-                            if (!isSpeaking) {
-                                try { assemblyAISTT.resumeStreaming() } catch (_: Exception) {}
-                            }
-                        }, 800)
-                    }
-                }
-
-                override fun onError(utteranceId: String?) {
-                    handler.post {
-                        isSpeaking = false
-                        lastProcessedText = ""
-                        handler.postDelayed({
-                            if (!isSpeaking) {
-                                try { assemblyAISTT.resumeStreaming() } catch (_: Exception) {}
-                            }
-                        }, 800)
-                    }
-                }
-            }
-        )
-    }
-
-    private fun speak(text: String, id: String) {
-        if (!ttsReady) return
-        handler.post {
-            isSpeaking = true
-            try { assemblyAISTT.pauseStreaming() } catch (_: Exception) {}
-
-            val params = Bundle()
-            params.putInt(TextToSpeech.Engine.KEY_PARAM_VOLUME, 100)
-            params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
-
-            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, params, id)
-        }
     }
 
     // =====================================================
@@ -359,12 +245,10 @@ class AssistantService : Service() {
     private fun resetConversationTimeout() {
         try {
             conversationTimeout?.let { handler.removeCallbacks(it) }
-
             val timeout = Runnable {
                 if (isConversationMode) {
                     isConversationMode = false
                     clearConversationHistory()
-                    android.util.Log.d("JARVIS_CONV", "Timeout - memory cleared")
                 }
             }
             conversationTimeout = timeout
@@ -372,16 +256,12 @@ class AssistantService : Service() {
         } catch (_: Exception) {}
     }
 
-    // ✅ NAYA: History clear karne ka safe function
     private fun clearConversationHistory() {
         try {
             while (conversationHistory.length() > 0) {
                 conversationHistory.remove(0)
             }
-            android.util.Log.d("JARVIS_MEM", "History cleared")
-        } catch (e: Exception) {
-            android.util.Log.e("JARVIS_MEM", "Clear error: ${e.message}")
-        }
+        } catch (_: Exception) {}
     }
 
     // =====================================================
@@ -549,12 +429,11 @@ class AssistantService : Service() {
     }
 
     // =====================================================
-    // GROQ AI - WITH CONVERSATION MEMORY
+    // GROQ AI
     // =====================================================
     private fun askGroqAI(question: String) {
         try {
             val url = "https://api.groq.com/openai/v1/chat/completions"
-
             val messages = JSONArray()
 
             messages.put(JSONObject().apply {
@@ -567,8 +446,7 @@ class AssistantService : Service() {
                         "4. Be warm, sweet, and helpful like a close friend. " +
                         "5. NEVER use Devanagari script - only Roman letters. " +
                         "6. No markdown, no bullet points - just plain speech. " +
-                        "7. You have MEMORY of this conversation. Refer to previous messages when relevant. " +
-                        "8. If user asks to teach English, be a patient teacher.")
+                        "7. You have MEMORY of this conversation.")
             })
 
             for (i in 0 until conversationHistory.length()) {
@@ -598,23 +476,14 @@ class AssistantService : Service() {
                             .getString("content")
                             .trim()
 
-                        android.util.Log.d("JARVIS_AI", "User: $question")
-                        android.util.Log.d("JARVIS_AI", "AI: $aiReply")
-
                         addToHistory("user", question)
                         addToHistory("assistant", aiReply)
-
                         speak(aiReply, "AI_REPLY")
                     } catch (e: Exception) {
                         speak("Sorry Sir, samajh nahi paya.", "AI_ERROR")
                     }
                 },
                 { error ->
-                    val errMsg = when {
-                        error.networkResponse != null -> "HTTP ${error.networkResponse.statusCode}"
-                        else -> error.message ?: "Unknown"
-                    }
-                    android.util.Log.e("JARVIS_AI", "API ERROR: $errMsg")
                     speak("Sorry Sir, connect nahi ho paya.", "AI_NETWORK_ERROR")
                 }
             ) {
@@ -638,15 +507,10 @@ class AssistantService : Service() {
                 put("role", role)
                 put("content", content)
             })
-
             while (conversationHistory.length() > 20) {
                 conversationHistory.remove(0)
             }
-
-            android.util.Log.d("JARVIS_MEM", "History size: ${conversationHistory.length()}")
-        } catch (e: Exception) {
-            android.util.Log.e("JARVIS_MEM", "Add error: ${e.message}")
-        }
+        } catch (_: Exception) {}
     }
 
     // =====================================================
@@ -682,8 +546,7 @@ class AssistantService : Service() {
         handler.removeCallbacksAndMessages(null)
         clearConversationHistory()
         try { assemblyAISTT.stopListening() } catch (_: Exception) {}
-        try { textToSpeech.stop() } catch (_: Exception) {}
-        try { textToSpeech.shutdown() } catch (_: Exception) {}
+        try { elevenTTS.stop() } catch (_: Exception) {}
         try { unregisterReceiver(CallReceiver.instance) } catch (_: Exception) {}
     }
 }
