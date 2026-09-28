@@ -50,6 +50,9 @@ class AssistantService : Service() {
     private var pendingCallName: String? = null
     private var lastProcessedText = ""
 
+    // ✅ NAYA: Conversation Memory
+    private val conversationHistory = JSONArray()
+
     private val wakeTimeout = Runnable {
         isAwake = false
         isConversationMode = false
@@ -67,9 +70,7 @@ class AssistantService : Service() {
             val restartService = Intent(applicationContext, this.javaClass)
             restartService.setPackage(packageName)
             val restartPendingIntent = PendingIntent.getService(
-                applicationContext,
-                1,
-                restartService,
+                applicationContext, 1, restartService,
                 PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
             )
             val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -123,7 +124,6 @@ class AssistantService : Service() {
         if (cleanText.isBlank()) return
         if (isSpeaking) return
         if (cleanText == lastProcessedText && isFinal) return
-
         if (!isFinal) return
 
         lastProcessedText = cleanText
@@ -131,7 +131,7 @@ class AssistantService : Service() {
     }
 
     // =====================================================
-    // TTS - Female Voice + High Pitch (agar female voice na mile)
+    // TTS - Indian Voice Priority
     // =====================================================
     private fun setupTTS() {
         try {
@@ -151,10 +151,12 @@ class AssistantService : Service() {
                         ttsReady = result != TextToSpeech.LANG_MISSING_DATA &&
                                 result != TextToSpeech.LANG_NOT_SUPPORTED
 
-                        textToSpeech.setSpeechRate(0.90f)
-                        textToSpeech.setPitch(1.40f) // ✅ Pitch badha diya
+                        // Natural sounding settings
+                        textToSpeech.setSpeechRate(0.85f)
+                        textToSpeech.setPitch(1.05f)
 
-                        selectFemaleVoice()
+                        logAllVoices()
+                        selectBestIndianVoice()
                         setupTTSListener()
                     } catch (e: Exception) {
                         android.util.Log.e("JARVIS_TTS", "TTS setup error: ${e.message}")
@@ -166,45 +168,70 @@ class AssistantService : Service() {
         }
     }
 
-    private fun selectFemaleVoice() {
+    // ✅ NAYA: Saari available voices log karo (debug ke liye)
+    private fun logAllVoices() {
         try {
             val voices = textToSpeech.voices ?: return
+            android.util.Log.d("JARVIS_TTS", "=== AVAILABLE VOICES ===")
+            for (voice in voices) {
+                if (voice.locale.language == "en") {
+                    android.util.Log.d(
+                        "JARVIS_TTS",
+                        "Voice: ${voice.name} | Locale: ${voice.locale} | Quality: ${voice.quality}"
+                    )
+                }
+            }
+            android.util.Log.d("JARVIS_TTS", "=== END VOICES ===")
+        } catch (e: Exception) {
+            android.util.Log.e("JARVIS_TTS", "Log voices error: ${e.message}")
+        }
+    }
+
+    // ✅ NAYA: Best Indian voice (female ya male dono)
+    private fun selectBestIndianVoice() {
+        try {
+            val voices = textToSpeech.voices ?: return
+
+            // Indian names (female + male)
+            val indianNames = listOf(
+                "veena", "raveena", "heera", "priya", "aditi", "kavya",
+                "rishi", "ravi", "arjun", "vikram", "hindi", "india"
+            )
+
+            // Female names (agar Indian nahi mili toh)
             val femaleNames = listOf(
                 "female", "-f-", "samantha", "victoria", "karen",
-                "moira", "tessa", "veena", "raveena", "heera",
-                "priya", "fiona", "susan", "allison", "ava",
+                "moira", "tessa", "fiona", "susan", "allison", "ava",
                 "amelie", "joanna", "salli", "kendra", "kimberly"
             )
-            val maleNames = listOf(
-                "male", "-m-", "daniel", "alex", "fred",
-                "rishi", "ravi", "oliver", "thomas", "james"
-            )
 
-            val femaleVoices = voices.filter { v ->
-                v.locale.language == "en" &&
-                        femaleNames.any { v.name.contains(it, true) } &&
-                        maleNames.none { v.name.contains(it, true) }
-            }
-
-            if (femaleVoices.isEmpty()) {
-                textToSpeech.setPitch(1.45f) // ✅ Fallback pitch aur badha
-                android.util.Log.e("JARVIS_TTS", "No female voice, using pitch 1.45")
-                return
-            }
+            val maleNames = listOf("male", "-m-", "daniel", "alex", "fred", "oliver", "thomas")
 
             var bestVoice: android.speech.tts.Voice? = null
             var bestScore = -1
 
-            for (voice in femaleVoices) {
+            for (voice in voices) {
+                if (voice.locale.language != "en") continue
+
                 var score = 0
-                if (voice.locale.country == "IN") score += 100
+
+                // Indian locale priority
+                if (voice.locale.country == "IN") score += 200
                 if (voice.locale.country == "GB") score += 50
                 if (voice.locale.country == "US") score += 30
-                if (voice.name.contains("female", true)) score += 20
-                if (voice.name.contains("veena", true)) score += 40
-                if (voice.name.contains("raveena", true)) score += 40
-                if (voice.name.contains("heera", true)) score += 40
-                if (voice.name.contains("priya", true)) score += 40
+
+                // Indian name priority
+                if (indianNames.any { voice.name.contains(it, true) }) score += 150
+
+                // Female preference (light)
+                if (femaleNames.any { voice.name.contains(it, true) }) score += 30
+
+                // Male penalty (kam)
+                if (maleNames.any { voice.name.contains(it, true) }) score -= 10
+
+                // High quality bonus
+                if (voice.quality >= android.speech.tts.Voice.QUALITY_HIGH) score += 40
+                if (voice.quality >= android.speech.tts.Voice.QUALITY_VERY_HIGH) score += 80
 
                 if (score > bestScore) {
                     bestScore = score
@@ -214,10 +241,15 @@ class AssistantService : Service() {
 
             if (bestVoice != null) {
                 textToSpeech.voice = bestVoice
-                android.util.Log.d("JARVIS_TTS", "Female voice: ${bestVoice.name}")
+                android.util.Log.d(
+                    "JARVIS_TTS",
+                    "SELECTED: ${bestVoice.name} | Locale: ${bestVoice.locale} | Score: $bestScore"
+                )
+            } else {
+                android.util.Log.e("JARVIS_TTS", "No suitable voice found")
             }
         } catch (e: Exception) {
-            android.util.Log.e("JARVIS_TTS", "Voice error: ${e.message}")
+            android.util.Log.e("JARVIS_TTS", "Voice selection error: ${e.message}")
         }
     }
 
@@ -278,11 +310,13 @@ class AssistantService : Service() {
             val exitWords = listOf(
                 "stop", "band karo", "shut down", "goodbye", "bye",
                 "chup", "chup ho jao", "bas", "ruko", "mat suno",
-                "conversation band", "exit", "quit", "end conversation"
+                "conversation band", "exit", "quit", "end conversation",
+                "naya topic", "reset"
             )
             if (exitWords.any { lowerText.contains(it) }) {
                 isConversationMode = false
                 conversationTimeout?.let { handler.removeCallbacks(it) }
+                conversationHistory.clear() // ✅ Memory clear
                 speak("Theek hai Sir, main chup ho jaati hoon.", "CONVERSATION_END")
                 return
             }
@@ -322,6 +356,7 @@ class AssistantService : Service() {
                 handler.removeCallbacks(wakeTimeout)
                 handler.postDelayed(wakeTimeout, 10000)
                 resetConversationTimeout()
+                conversationHistory.clear() // ✅ Naya session
                 speak("Haan Sir, boliye. Main sun rahi hoon.", "WAKE_UP")
             } else {
                 isConversationMode = true
@@ -338,10 +373,12 @@ class AssistantService : Service() {
             val timeout = Runnable {
                 if (isConversationMode) {
                     isConversationMode = false
+                    conversationHistory.clear() // ✅ Timeout pe memory clear
+                    android.util.Log.d("JARVIS_CONV", "Timeout - memory cleared")
                 }
             }
             conversationTimeout = timeout
-            handler.postDelayed(timeout, 90000)
+            handler.postDelayed(timeout, 120000) // 2 minute
         } catch (_: Exception) {}
     }
 
@@ -510,34 +547,45 @@ class AssistantService : Service() {
     }
 
     // =====================================================
-    // GROQ AI
+    // GROQ AI - WITH CONVERSATION MEMORY
     // =====================================================
     private fun askGroqAI(question: String) {
         try {
             val url = "https://api.groq.com/openai/v1/chat/completions"
 
+            val messages = JSONArray()
+
+            // System prompt
+            messages.put(JSONObject().apply {
+                put("role", "system")
+                put("content", "You are Jarvis, a smart, witty and friendly AI assistant for an Indian user. " +
+                        "RULES: " +
+                        "1. Always reply in HINGLISH (Hindi + English mixed) using ROMAN script only. " +
+                        "2. Address the user as 'Sir' always. " +
+                        "3. Keep replies SHORT - max 2-3 sentences. " +
+                        "4. Be warm, sweet, and helpful like a close friend. " +
+                        "5. NEVER use Devanagari script - only Roman letters. " +
+                        "6. No markdown, no bullet points - just plain speech. " +
+                        "7. You have MEMORY of this conversation. Refer to previous messages when relevant. " +
+                        "8. If user asks to teach English, be a patient teacher.")
+            })
+
+            // ✅ Conversation history add karo
+            for (i in 0 until conversationHistory.length()) {
+                messages.put(conversationHistory.getJSONObject(i))
+            }
+
+            // Current question
+            messages.put(JSONObject().apply {
+                put("role", "user")
+                put("content", question)
+            })
+
             val requestBody = JSONObject().apply {
                 put("model", "openai/gpt-oss-20b")
-                put("messages", JSONArray().apply {
-                    put(JSONObject().apply {
-                        put("role", "system")
-                        put("content", "You are Jarvis, a smart, witty and friendly AI assistant for an Indian user. " +
-                                "RULES: " +
-                                "1. Always reply in HINGLISH (Hindi + English mixed) using ROMAN script only. " +
-                                "2. Address the user as 'Sir' always. " +
-                                "3. Keep replies SHORT - max 2-3 sentences. " +
-                                "4. Be warm, sweet, and helpful like a close friend. " +
-                                "5. NEVER use Devanagari script - only Roman letters. " +
-                                "6. No markdown, no bullet points - just plain speech. " +
-                                "7. If user asks to teach English, be a patient teacher.")
-                    })
-                    put(JSONObject().apply {
-                        put("role", "user")
-                        put("content", question)
-                    })
-                })
+                put("messages", messages)
                 put("temperature", 0.7)
-                put("max_tokens", 200)
+                put("max_tokens", 250)
             }
 
             val request = object : JsonObjectRequest(
@@ -550,6 +598,14 @@ class AssistantService : Service() {
                             .getJSONObject("message")
                             .getString("content")
                             .trim()
+
+                        android.util.Log.d("JARVIS_AI", "User: $question")
+                        android.util.Log.d("JARVIS_AI", "AI: $aiReply")
+
+                        // ✅ Memory mein add karo
+                        addToHistory("user", question)
+                        addToHistory("assistant", aiReply)
+
                         speak(aiReply, "AI_REPLY")
                     } catch (e: Exception) {
                         speak("Sorry Sir, samajh nahi paya.", "AI_ERROR")
@@ -560,6 +616,7 @@ class AssistantService : Service() {
                         error.networkResponse != null -> "HTTP ${error.networkResponse.statusCode}"
                         else -> error.message ?: "Unknown"
                     }
+                    android.util.Log.e("JARVIS_AI", "API ERROR: $errMsg")
                     speak("Sorry Sir, connect nahi ho paya.", "AI_NETWORK_ERROR")
                 }
             ) {
@@ -574,6 +631,25 @@ class AssistantService : Service() {
             requestQueue.add(request)
         } catch (e: Exception) {
             speak("Sorry Sir, kuch problem hai.", "AI_ERROR")
+        }
+    }
+
+    // ✅ NAYA: History add karne ka function
+    private fun addToHistory(role: String, content: String) {
+        try {
+            conversationHistory.put(JSONObject().apply {
+                put("role", role)
+                put("content", content)
+            })
+
+            // Sirf last 20 messages rakho (10 pairs) - token limit ke liye
+            while (conversationHistory.length() > 20) {
+                conversationHistory.remove(0)
+            }
+
+            android.util.Log.d("JARVIS_MEM", "History size: ${conversationHistory.length()}")
+        } catch (e: Exception) {
+            android.util.Log.e("JARVIS_MEM", "Add error: ${e.message}")
         }
     }
 
@@ -608,6 +684,7 @@ class AssistantService : Service() {
         isListeningActive = false
         conversationTimeout?.let { handler.removeCallbacks(it) }
         handler.removeCallbacksAndMessages(null)
+        conversationHistory.clear()
         try { assemblyAISTT.stopListening() } catch (_: Exception) {}
         try { textToSpeech.stop() } catch (_: Exception) {}
         try { textToSpeech.shutdown() } catch (_: Exception) {}
