@@ -96,12 +96,12 @@ class AssistantService : Service() {
     }
 
     // =====================================================
-    // ELEVENLABS TTS SETUP
+    // OPENAI TTS SETUP
     // =====================================================
     private fun setupOpenAITTS() {
-    try {
-        openAITTS = OpenAITTS(this)
-        openAITTS.setListener(object : OpenAITTS.TTSListener {
+        try {
+            openAITTS = OpenAITTS(this)
+            openAITTS.setListener(object : OpenAITTS.TTSListener {
                 override fun onStart() {
                     handler.post {
                         isSpeaking = true
@@ -111,7 +111,6 @@ class AssistantService : Service() {
                 override fun onDone() {
                     handler.post {
                         isSpeaking = false
-                        // ✅ lastProcessedText clear kar 1.5 sec baad
                         handler.postDelayed({
                             if (!isSpeaking) {
                                 lastProcessedText = ""
@@ -123,6 +122,7 @@ class AssistantService : Service() {
                 override fun onError(message: String) {
                     handler.post {
                         isSpeaking = false
+                        lastProcessedText = ""
                     }
                 }
             })
@@ -164,27 +164,25 @@ class AssistantService : Service() {
     }
 
     // =====================================================
-    // ✅ BARGE-IN SUPPORT
+    // BARGE-IN SUPPORT
     // =====================================================
     private fun handleTranscript(text: String, isFinal: Boolean) {
         val cleanText = text.lowercase(Locale.US).trim()
         if (cleanText.isBlank()) return
         if (!isFinal) return
 
-        // ✅ Duplicate check with 1.5 sec window
         val now = System.currentTimeMillis()
         if (cleanText == lastProcessedText && (now - lastProcessedTime) < 1500) return
 
         android.util.Log.d("JARVIS_STT", "Final: $cleanText")
 
-        // ✅ BARGE-IN: Jarvis bol rahi hai aur user boli → Jarvis ko rok do
+        // BARGE-IN: Jarvis bol rahi hai aur user boli -> Jarvis ko rok do
         if (isSpeaking) {
             android.util.Log.d("JARVIS_BARGEIN", "User interrupted!")
-            try { elevenTTS.stop() } catch (_: Exception) {}
+            try { openAITTS.stop() } catch (_: Exception) {}
             isSpeaking = false
         }
 
-        // ✅ Processing guard
         if (isProcessing) return
         isProcessing = true
 
@@ -200,7 +198,6 @@ class AssistantService : Service() {
     // SPEECH HANDLER
     // =====================================================
     private fun handleSpeech(text: String) {
-        // ✅ Exit words - kabhi bhi kaam karein
         val lowerText = text.lowercase().trim()
         val exitWords = listOf(
             "stop", "band karo", "shut down", "goodbye", "bye bye",
@@ -208,7 +205,9 @@ class AssistantService : Service() {
             "conversation band", "exit", "quit", "end conversation",
             "naya topic", "reset", "shant ho jao", "chhodo"
         )
-        if (isConversationMode && exitWords.any { lowerText == it || lowerText.contains("$it ") || lowerText.contains(" $it") }) {
+        if (isConversationMode && exitWords.any {
+                lowerText == it || lowerText.contains("$it ") || lowerText.contains(" $it")
+            }) {
             isConversationMode = false
             conversationTimeout?.let { handler.removeCallbacks(it) }
             clearConversationHistory()
@@ -216,14 +215,12 @@ class AssistantService : Service() {
             return
         }
 
-        // Conversation mode - sab kuch process karo
         if (isConversationMode) {
             resetConversationTimeout()
             executeVoiceCommand(text)
             return
         }
 
-        // Wake word mode
         if (isAwake) {
             isAwake = false
             handler.removeCallbacks(wakeTimeout)
@@ -261,7 +258,7 @@ class AssistantService : Service() {
                 }
             }
             conversationTimeout = timeout
-            handler.postDelayed(timeout, 180000) // 3 minute
+            handler.postDelayed(timeout, 180000)
         } catch (_: Exception) {}
     }
 
