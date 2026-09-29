@@ -27,7 +27,7 @@ import java.util.Locale
 class AssistantService : Service() {
 
     private lateinit var assemblyAISTT: AssemblyAISTT
-    private lateinit var elevenTTS: ElevenLabsTTS
+    private lateinit var openAITTS: OpenAITTS
     private lateinit var audioManager: AudioManager
     private lateinit var actionExecutor: ActionExecutor
     private lateinit var requestQueue: RequestQueue
@@ -86,7 +86,7 @@ class AssistantService : Service() {
             actionExecutor = ActionExecutor(this)
             requestQueue = Volley.newRequestQueue(this)
             createNotification()
-            setupElevenTTS()
+            setupOpenAITTS()
             setupCallReceiver()
             setupAssemblyAI()
             isListeningActive = true
@@ -98,10 +98,10 @@ class AssistantService : Service() {
     // =====================================================
     // ELEVENLABS TTS SETUP
     // =====================================================
-    private fun setupElevenTTS() {
-        try {
-            elevenTTS = ElevenLabsTTS(this)
-            elevenTTS.setListener(object : ElevenLabsTTS.TTSListener {
+    private fun setupOpenAITTS() {
+    try {
+        openAITTS = OpenAITTS(this)
+        openAITTS.setListener(object : OpenAITTS.TTSListener {
                 override fun onStart() {
                     handler.post {
                         isSpeaking = true
@@ -554,7 +554,7 @@ class AssistantService : Service() {
         handler.removeCallbacksAndMessages(null)
         clearConversationHistory()
         try { assemblyAISTT.stopListening() } catch (_: Exception) {}
-        try { elevenTTS.stop() } catch (_: Exception) {}
+        try { openAITTS.stop() } catch (_: Exception) {}
         try { unregisterReceiver(CallReceiver.instance) } catch (_: Exception) {}
     }
 }
