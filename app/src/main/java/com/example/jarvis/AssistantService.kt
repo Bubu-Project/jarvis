@@ -48,11 +48,23 @@ class AssistantService : Service() {
     private var lastProcessedText = ""
     private var lastProcessedTime = 0L
 
+    // ✅ MEMORY: 100 messages tak yaad rakhega
     private val conversationHistory = JSONArray()
-    private val MAX_HISTORY = 30
+    private val MAX_HISTORY = 100
 
     private val wakeTimeout = Runnable {
         isAwake = false
+    }
+
+    // ✅ STT WATCHDOG - 60 sec tak kuch na aaye toh restart
+    private val sttWatchdog = Runnable {
+        if (isListeningActive) {
+            android.util.Log.d("JARVIS_STT", "Watchdog - restarting STT")
+            try { assemblyAISTT.stopListening() } catch (_: Exception) {}
+            handler.postDelayed({
+                if (isListeningActive) setupAssemblyAI()
+            }, 1000)
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -90,9 +102,16 @@ class AssistantService : Service() {
             setupCallReceiver()
             setupAssemblyAI()
             isListeningActive = true
+            resetSttWatchdog()
         } catch (e: Exception) {
             android.util.Log.e("JARVIS_DEBUG", "CRASH: ${e.message}")
         }
+    }
+
+    // ✅ Watchdog reset - har transcript pe call hoga
+    private fun resetSttWatchdog() {
+        handler.removeCallbacks(sttWatchdog)
+        handler.postDelayed(sttWatchdog, 60000)
     }
 
     // =====================================================
@@ -103,18 +122,14 @@ class AssistantService : Service() {
             deepgramTTS = DeepgramTTS(this)
             deepgramTTS.setListener(object : DeepgramTTS.TTSListener {
                 override fun onStart() {
-                    handler.post {
-                        isSpeaking = true
-                    }
+                    handler.post { isSpeaking = true }
                 }
 
                 override fun onDone() {
                     handler.post {
                         isSpeaking = false
                         handler.postDelayed({
-                            if (!isSpeaking) {
-                                lastProcessedText = ""
-                            }
+                            if (!isSpeaking) lastProcessedText = ""
                         }, 1500)
                     }
                 }
@@ -158,15 +173,18 @@ class AssistantService : Service() {
                 }
             })
             assemblyAISTT.startListening()
+            resetSttWatchdog()
         } catch (e: Exception) {
             android.util.Log.e("JARVIS_STT", "Setup failed: ${e.message}")
         }
     }
 
     // =====================================================
-    // BARGE-IN SUPPORT
+    // TRANSCRIPT HANDLER with Barge-in
     // =====================================================
     private fun handleTranscript(text: String, isFinal: Boolean) {
+        resetSttWatchdog()  // ✅ Har transcript pe watchdog reset
+
         val cleanText = text.lowercase(Locale.US).trim()
         if (cleanText.isBlank()) return
         if (!isFinal) return
@@ -190,7 +208,6 @@ class AssistantService : Service() {
         lastProcessedTime = now
 
         handleSpeech(cleanText)
-
         handler.postDelayed({ isProcessing = false }, 500)
     }
 
@@ -254,7 +271,6 @@ class AssistantService : Service() {
             val timeout = Runnable {
                 if (isConversationMode) {
                     isConversationMode = false
-                    android.util.Log.d("JARVIS_CONV", "Timeout - back to wake word")
                 }
             }
             conversationTimeout = timeout
@@ -434,7 +450,7 @@ class AssistantService : Service() {
     }
 
     // =====================================================
-    // GROQ AI
+    // GROQ AI - MEMORY 100
     // =====================================================
     private fun askGroqAI(question: String) {
         try {
@@ -451,12 +467,13 @@ class AssistantService : Service() {
                         "4. Be warm, sweet, and helpful like a close friend. " +
                         "5. NEVER use Devanagari script - only Roman letters. " +
                         "6. No markdown, no bullet points - just plain speech. " +
-                        "7. You have FULL MEMORY of this conversation. " +
+                        "7. You have FULL MEMORY of this conversation. Remember names, facts, mood, and context. " +
                         "8. If user asks to teach English, be a patient teacher. " +
                         "9. Be conversational - sometimes ask follow-up questions. " +
                         "10. Voice is converted to text - user's words may be misspelled. Understand the INTENT and respond naturally.")
             })
 
+            // ✅ 100 tak ki history bhej
             for (i in 0 until conversationHistory.length()) {
                 messages.put(conversationHistory.getJSONObject(i))
             }
@@ -515,9 +532,11 @@ class AssistantService : Service() {
                 put("role", role)
                 put("content", content)
             })
+            // ✅ 100 se zyada hui toh purane remove
             while (conversationHistory.length() > MAX_HISTORY) {
                 conversationHistory.remove(0)
             }
+            android.util.Log.d("JARVIS_MEM", "History: ${conversationHistory.length()}/$MAX_HISTORY")
         } catch (_: Exception) {}
     }
 
@@ -548,6 +567,7 @@ class AssistantService : Service() {
         super.onDestroy()
         isListeningActive = false
         conversationTimeout?.let { handler.removeCallbacks(it) }
+        handler.removeCallbacks(sttWatchdog)
         handler.removeCallbacksAndMessages(null)
         clearConversationHistory()
         try { assemblyAISTT.stopListening() } catch (_: Exception) {}
