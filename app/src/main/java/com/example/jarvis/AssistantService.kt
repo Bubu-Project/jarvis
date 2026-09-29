@@ -27,7 +27,7 @@ import java.util.Locale
 class AssistantService : Service() {
 
     private lateinit var assemblyAISTT: AssemblyAISTT
-    private lateinit var googleTTS: GoogleTTS
+    private lateinit var deepgramTTS: DeepgramTTS
     private lateinit var audioManager: AudioManager
     private lateinit var actionExecutor: ActionExecutor
     private lateinit var requestQueue: RequestQueue
@@ -86,7 +86,7 @@ class AssistantService : Service() {
             actionExecutor = ActionExecutor(this)
             requestQueue = Volley.newRequestQueue(this)
             createNotification()
-            setupGoogleTTS()
+            setupDeepgramTTS()
             setupCallReceiver()
             setupAssemblyAI()
             isListeningActive = true
@@ -96,12 +96,12 @@ class AssistantService : Service() {
     }
 
     // =====================================================
-    // GOOGLE TTS SETUP
+    // DEEPGRAM TTS SETUP
     // =====================================================
-    private fun setupGoogleTTS() {
+    private fun setupDeepgramTTS() {
         try {
-            googleTTS = GoogleTTS(this)
-            googleTTS.setListener(object : GoogleTTS.TTSListener {
+            deepgramTTS = DeepgramTTS(this)
+            deepgramTTS.setListener(object : DeepgramTTS.TTSListener {
                 override fun onStart() {
                     handler.post {
                         isSpeaking = true
@@ -133,7 +133,7 @@ class AssistantService : Service() {
 
     private fun speak(text: String, id: String) {
         handler.post {
-            try { googleTTS.speak(text) } catch (e: Exception) {
+            try { deepgramTTS.speak(text) } catch (e: Exception) {
                 android.util.Log.e("JARVIS_TTS", "Speak failed: ${e.message}")
             }
         }
@@ -179,7 +179,7 @@ class AssistantService : Service() {
         // BARGE-IN
         if (isSpeaking) {
             android.util.Log.d("JARVIS_BARGEIN", "User interrupted!")
-            try { googleTTS.stop() } catch (_: Exception) {}
+            try { deepgramTTS.stop() } catch (_: Exception) {}
             isSpeaking = false
         }
 
@@ -551,7 +551,7 @@ class AssistantService : Service() {
         handler.removeCallbacksAndMessages(null)
         clearConversationHistory()
         try { assemblyAISTT.stopListening() } catch (_: Exception) {}
-        try { googleTTS.stop() } catch (_: Exception) {}
+        try { deepgramTTS.stop() } catch (_: Exception) {}
         try { unregisterReceiver(CallReceiver.instance) } catch (_: Exception) {}
     }
 }
