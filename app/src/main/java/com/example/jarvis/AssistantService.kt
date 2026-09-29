@@ -133,7 +133,7 @@ class AssistantService : Service() {
 
     private fun speak(text: String, id: String) {
         handler.post {
-            try { elevenTTS.speak(text) } catch (e: Exception) {
+            try { openAITTS.speak(text) } catch (e: Exception) {
                 android.util.Log.e("JARVIS_TTS", "Speak failed: ${e.message}")
             }
         }
