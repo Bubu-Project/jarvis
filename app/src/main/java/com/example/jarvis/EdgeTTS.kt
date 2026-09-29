@@ -19,12 +19,6 @@ class EdgeTTS(private val context: Context) {
     private val TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4"
     private val CHROMIUM_VERSION = "130.0.2849.68"
 
-    // Naya endpoint jisme Sec-MS-GEC token add kiya gaya hai
-    private val WS_URL = "wss://speech.platform.bing.com/consumer/speech/" +
-            "synthesize/readaloud/edge/v1?TrustedClientToken=$TRUSTED_CLIENT_TOKEN" +
-            "&Sec-MS-GEC=${generateSecMsGec()}" +
-            "&Sec-MS-GEC-Version=1-$CHROMIUM_VERSION"
-
     private val VOICE = "en-IN-NeerjaNeural"
 
     private var webSocket: WebSocket? = null
@@ -44,15 +38,15 @@ class EdgeTTS(private val context: Context) {
     fun setListener(l: TTSListener) { listener = l }
 
     // =====================================================
-    // NAYA: Sec-MS-GEC token generate karne ka function
+    // Sec-MS-GEC Token Generator (Fresh har baar)
     // =====================================================
     private fun generateSecMsGec(): String {
         try {
-            // Windows file time epoch (1601-01-01)
+            // Windows file time epoch (1601-01-01) in seconds
             val ticks = System.currentTimeMillis() / 1000L + 11644473600L
             // Round down to nearest 5 minutes (300 seconds)
             val roundedTicks = (ticks / 300) * 300
-            // Convert to 100-nanosecond intervals (Windows file time)
+            // Convert to 100-nanosecond intervals
             val windowsTicks = roundedTicks * 10000000L
 
             val strToHash = "$windowsTicks$TRUSTED_CLIENT_TOKEN"
@@ -60,14 +54,24 @@ class EdgeTTS(private val context: Context) {
             val md = MessageDigest.getInstance("SHA-256")
             val hashBytes = md.digest(strToHash.toByteArray(Charsets.US_ASCII))
 
-            // Convert to uppercase hex string
+            // Uppercase hex string
             val hexString = hashBytes.joinToString("") { "%02X".format(it) }
-            Log.d("JARVIS_EDGE", "Generated GEC token: $hexString")
+            Log.d("JARVIS_EDGE", "GEC token: $hexString")
             return hexString
         } catch (e: Exception) {
-            Log.e("JARVIS_EDGE", "GEC generation error: ${e.message}")
+            Log.e("JARVIS_EDGE", "GEC error: ${e.message}")
             return ""
         }
+    }
+
+    private fun buildWebSocketUrl(): String {
+        val gec = generateSecMsGec()
+        return "wss://speech.platform.bing.com/consumer/speech/" +
+                "synthesize/readaloud/edge/v1" +
+                "?TrustedClientToken=$TRUSTED_CLIENT_TOKEN" +
+                "&Sec-MS-GEC=$gec" +
+                "&Sec-MS-GEC-Version=1-$CHROMIUM_VERSION" +
+                "&ConnectionId=${UUID.randomUUID().toString().replace("-", "")}"
     }
 
     fun speak(text: String) {
@@ -82,11 +86,11 @@ class EdgeTTS(private val context: Context) {
         try {
             val client = OkHttpClient.Builder()
                 .readTimeout(0, TimeUnit.MILLISECONDS)
+                .connectTimeout(15, TimeUnit.SECONDS)
                 .build()
 
             val request = Request.Builder()
-                .url(WS_URL)
-                // NAYA: Microsoft ke zaroori headers
+                .url(buildWebSocketUrl())
                 .addHeader("Origin", "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold")
                 .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0")
@@ -100,7 +104,7 @@ class EdgeTTS(private val context: Context) {
 
             webSocket = client.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
-                    Log.d("JARVIS_EDGE", "Connected")
+                    Log.d("JARVIS_EDGE", "WebSocket Connected")
                     sendConfig(webSocket)
                     sendSSML(webSocket, text, connectionId)
                 }
@@ -121,7 +125,11 @@ class EdgeTTS(private val context: Context) {
                     val code = response?.code ?: 0
                     Log.e("JARVIS_EDGE", "Failed: $err | Code: $code")
                     handler.post {
-                        Toast.makeText(context, "Edge TTS: $err (Code: $code)", Toast.LENGTH_LONG).show()
+                        Toast.makeText(
+                            context,
+                            "Edge TTS: $err (Code: $code)",
+                            Toast.LENGTH_LONG
+                        ).show()
                         listener?.onError(err)
                     }
                 }
@@ -142,8 +150,10 @@ class EdgeTTS(private val context: Context) {
     }
 
     private fun sendConfig(ws: WebSocket) {
-        val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)
-            .format(java.util.Date())
+        val timestamp = java.text.SimpleDateFormat(
+            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+            java.util.Locale.US
+        ).format(java.util.Date())
 
         val config = "X-Timestamp:$timestamp\r\n" +
                 "Content-Type:application/json; charset=utf-8\r\n" +
@@ -227,7 +237,7 @@ class EdgeTTS(private val context: Context) {
                 start()
             }
 
-            Log.d("JARVIS_EDGE", "Playing audio: ${audioBuffer.size} bytes")
+            Log.d("JARVIS_EDGE", "Playing: ${audioBuffer.size} bytes")
 
         } catch (e: Exception) {
             isSpeaking = false
