@@ -27,7 +27,7 @@ import java.util.Locale
 class AssistantService : Service() {
 
     private lateinit var assemblyAISTT: AssemblyAISTT
-    private lateinit var edgeTTS: EdgeTTS
+    private lateinit var googleTTS: GoogleTTS
     private lateinit var audioManager: AudioManager
     private lateinit var actionExecutor: ActionExecutor
     private lateinit var requestQueue: RequestQueue
@@ -86,7 +86,7 @@ class AssistantService : Service() {
             actionExecutor = ActionExecutor(this)
             requestQueue = Volley.newRequestQueue(this)
             createNotification()
-            setupEdgeTTS()
+            setupGoogleTTS()
             setupCallReceiver()
             setupAssemblyAI()
             isListeningActive = true
@@ -95,12 +95,17 @@ class AssistantService : Service() {
         }
     }
 
-    private fun setupEdgeTTS() {
+    // =====================================================
+    // GOOGLE TTS SETUP
+    // =====================================================
+    private fun setupGoogleTTS() {
         try {
-            edgeTTS = EdgeTTS(this)
-            edgeTTS.setListener(object : EdgeTTS.TTSListener {
+            googleTTS = GoogleTTS(this)
+            googleTTS.setListener(object : GoogleTTS.TTSListener {
                 override fun onStart() {
-                    handler.post { isSpeaking = true }
+                    handler.post {
+                        isSpeaking = true
+                    }
                 }
 
                 override fun onDone() {
@@ -128,12 +133,15 @@ class AssistantService : Service() {
 
     private fun speak(text: String, id: String) {
         handler.post {
-            try { edgeTTS.speak(text) } catch (e: Exception) {
+            try { googleTTS.speak(text) } catch (e: Exception) {
                 android.util.Log.e("JARVIS_TTS", "Speak failed: ${e.message}")
             }
         }
     }
 
+    // =====================================================
+    // ASSEMBLYAI SETUP
+    // =====================================================
     private fun setupAssemblyAI() {
         try {
             assemblyAISTT = AssemblyAISTT(this)
@@ -155,6 +163,9 @@ class AssistantService : Service() {
         }
     }
 
+    // =====================================================
+    // BARGE-IN SUPPORT
+    // =====================================================
     private fun handleTranscript(text: String, isFinal: Boolean) {
         val cleanText = text.lowercase(Locale.US).trim()
         if (cleanText.isBlank()) return
@@ -165,9 +176,10 @@ class AssistantService : Service() {
 
         android.util.Log.d("JARVIS_STT", "Final: $cleanText")
 
+        // BARGE-IN
         if (isSpeaking) {
             android.util.Log.d("JARVIS_BARGEIN", "User interrupted!")
-            try { edgeTTS.stop() } catch (_: Exception) {}
+            try { googleTTS.stop() } catch (_: Exception) {}
             isSpeaking = false
         }
 
@@ -182,6 +194,9 @@ class AssistantService : Service() {
         handler.postDelayed({ isProcessing = false }, 500)
     }
 
+    // =====================================================
+    // SPEECH HANDLER
+    // =====================================================
     private fun handleSpeech(text: String) {
         val lowerText = text.lowercase().trim()
         val exitWords = listOf(
@@ -255,6 +270,9 @@ class AssistantService : Service() {
         } catch (_: Exception) {}
     }
 
+    // =====================================================
+    // CALL HANDLING
+    // =====================================================
     private fun setupCallReceiver() {
         try {
             val receiver = CallReceiver()
@@ -315,6 +333,9 @@ class AssistantService : Service() {
         }, 15000)
     }
 
+    // =====================================================
+    // COMMAND EXECUTOR
+    // =====================================================
     private fun executeVoiceCommand(command: String) {
         val cmd = command.lowercase(Locale.US).trim()
 
@@ -412,6 +433,9 @@ class AssistantService : Service() {
         }
     }
 
+    // =====================================================
+    // GROQ AI
+    // =====================================================
     private fun askGroqAI(question: String) {
         try {
             val url = "https://api.groq.com/openai/v1/chat/completions"
@@ -497,6 +521,9 @@ class AssistantService : Service() {
         } catch (_: Exception) {}
     }
 
+    // =====================================================
+    // NOTIFICATION
+    // =====================================================
     private fun createNotification() {
         val channelId = "jarvis_channel"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -524,7 +551,7 @@ class AssistantService : Service() {
         handler.removeCallbacksAndMessages(null)
         clearConversationHistory()
         try { assemblyAISTT.stopListening() } catch (_: Exception) {}
-        try { edgeTTS.stop() } catch (_: Exception) {}
+        try { googleTTS.stop() } catch (_: Exception) {}
         try { unregisterReceiver(CallReceiver.instance) } catch (_: Exception) {}
     }
 }
