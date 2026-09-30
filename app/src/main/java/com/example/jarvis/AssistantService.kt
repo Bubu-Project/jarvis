@@ -48,7 +48,6 @@ class AssistantService : Service() {
     private var lastProcessedText = ""
     private var lastProcessedTime = 0L
 
-    // MEMORY: 100 messages tak yaad rakhega
     private val conversationHistory = JSONArray()
     private val MAX_HISTORY = 100
 
@@ -63,7 +62,7 @@ class AssistantService : Service() {
             try { assemblyAISTT.stopListening() } catch (_: Exception) {}
             handler.postDelayed({
                 if (isListeningActive) setupAssemblyAI()
-            }, 1000)
+            }, 500)  // ✅ 1000 → 500
         }
     }
 
@@ -85,7 +84,7 @@ class AssistantService : Service() {
             val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
             alarmManager.set(
                 AlarmManager.ELAPSED_REALTIME,
-                SystemClock.elapsedRealtime() + 1000,
+                SystemClock.elapsedRealtime() + 500,
                 restartPendingIntent
             )
         } catch (_: Exception) {}
@@ -127,9 +126,10 @@ class AssistantService : Service() {
                 override fun onDone() {
                     handler.post {
                         isSpeaking = false
+                        // ✅ 1500 → 300 (fast restart)
                         handler.postDelayed({
                             if (!isSpeaking) lastProcessedText = ""
-                        }, 1500)
+                        }, 300)
                     }
                 }
 
@@ -165,9 +165,10 @@ class AssistantService : Service() {
                 }
                 override fun onError(message: String) {
                     handler.post {
+                        // ✅ 3000 → 1000 (fast retry)
                         handler.postDelayed({
                             if (isListeningActive) setupAssemblyAI()
-                        }, 3000)
+                        }, 1000)
                     }
                 }
             })
@@ -179,7 +180,7 @@ class AssistantService : Service() {
     }
 
     // =====================================================
-    // TRANSCRIPT HANDLER with Barge-in
+    // TRANSCRIPT HANDLER
     // =====================================================
     private fun handleTranscript(text: String, isFinal: Boolean) {
         resetSttWatchdog()
@@ -189,7 +190,8 @@ class AssistantService : Service() {
         if (!isFinal) return
 
         val now = System.currentTimeMillis()
-        if (cleanText == lastProcessedText && (now - lastProcessedTime) < 1500) return
+        // ✅ 1500 → 500 (fast duplicate check)
+        if (cleanText == lastProcessedText && (now - lastProcessedTime) < 500) return
 
         android.util.Log.d("JARVIS_STT", "Final: $cleanText")
 
@@ -207,7 +209,8 @@ class AssistantService : Service() {
         lastProcessedTime = now
 
         handleSpeech(cleanText)
-        handler.postDelayed({ isProcessing = false }, 500)
+        // ✅ 500 → 150 (fast unlock)
+        handler.postDelayed({ isProcessing = false }, 150)
     }
 
     // =====================================================
@@ -252,10 +255,11 @@ class AssistantService : Service() {
                 isConversationMode = true
                 isAwake = true
                 handler.removeCallbacks(wakeTimeout)
-                handler.postDelayed(wakeTimeout, 10000)
+                // ✅ 10000 → 5000
+                handler.postDelayed(wakeTimeout, 5000)
                 resetConversationTimeout()
                 clearConversationHistory()
-                speak("Haan Sir, boliye. Main sun rahi hoon.", "WAKE_UP")
+                speak("Haan Sir, boliye.", "WAKE_UP")  // ✅ Short text = fast TTS
             } else {
                 isConversationMode = true
                 resetConversationTimeout()
@@ -273,7 +277,8 @@ class AssistantService : Service() {
                 }
             }
             conversationTimeout = timeout
-            handler.postDelayed(timeout, 180000)
+            // ✅ 180000 → 120000 (2 min)
+            handler.postDelayed(timeout, 120000)
         } catch (_: Exception) {}
     }
 
@@ -323,8 +328,8 @@ class AssistantService : Service() {
 
         val isSpam = actionExecutor.isSpamNumber(number)
         if (isSpam) {
-            speak("Sir, spam call aa raha hai. Reject kar rahi hoon.", "SPAM_CALL")
-            handler.postDelayed({ actionExecutor.rejectCall() }, 3500)
+            speak("Sir, spam call. Reject kar rahi hoon.", "SPAM_CALL")
+            handler.postDelayed({ actionExecutor.rejectCall() }, 2500)  // ✅ 3500 → 2500
             return
         }
 
@@ -333,19 +338,20 @@ class AssistantService : Service() {
         isWaitingForCallResponse = true
 
         val announcement = if (contactName != null) {
-            "Sir, $contactName ka call aa raha hai. Uthau?"
+            "Sir, $contactName ka call. Uthau?"
         } else {
-            "Sir, ek unknown number se call aa raha hai. Uthau?"
+            "Sir, unknown number se call. Uthau?"
         }
 
         speak(announcement, "INCOMING_CALL")
 
+        // ✅ 15000 → 10000
         handler.postDelayed({
             if (isWaitingForCallResponse) {
                 isWaitingForCallResponse = false
                 pendingCallName = null
             }
-        }, 15000)
+        }, 10000)
     }
 
     // =====================================================
@@ -361,7 +367,7 @@ class AssistantService : Service() {
             ) -> {
                 isWaitingForCallResponse = false
                 actionExecutor.answerCall()
-                speak("Call utha rahi hoon, Sir.", "CALL_ANSWERED")
+                speak("Utha rahi hoon.", "CALL_ANSWERED")
                 pendingCallName = null
             }
 
@@ -372,30 +378,30 @@ class AssistantService : Service() {
             ) -> {
                 isWaitingForCallResponse = false
                 actionExecutor.rejectCall()
-                speak("Call reject kar diya, Sir.", "CALL_REJECTED")
+                speak("Reject kar diya.", "CALL_REJECTED")
                 pendingCallName = null
             }
 
             cmd.contains("flashlight") || cmd.contains("flash light") || cmd.contains("torch") -> {
                 if (cmd.contains("off") || cmd.contains("band") || cmd.contains("bujha")) {
                     actionExecutor.toggleFlashlight(false)
-                    speak("Flashlight off, Sir.", "FLASH_OFF")
+                    speak("Off, Sir.", "FLASH_OFF")
                 } else {
                     actionExecutor.toggleFlashlight(true)
-                    speak("Flashlight on, Sir.", "FLASH_ON")
+                    speak("On, Sir.", "FLASH_ON")
                 }
             }
 
             cmd.contains("time") || cmd.contains("samay") -> {
-                speak("Sir, abhi ${actionExecutor.getCurrentTime()} ho raha hai.", "TIME")
+                speak("Sir, ${actionExecutor.getCurrentTime()}.", "TIME")
             }
 
             cmd.contains("date") || cmd.contains("today") || cmd.contains("tarikh") -> {
-                speak("Sir, aaj ${actionExecutor.getCurrentDate()} hai.", "DATE")
+                speak("Sir, ${actionExecutor.getCurrentDate()}.", "DATE")
             }
 
             cmd.contains("battery") || cmd.contains("charge") -> {
-                speak("Sir, battery ${actionExecutor.getBatteryLevel()} percent hai.", "BATTERY")
+                speak("Battery ${actionExecutor.getBatteryLevel()} percent, Sir.", "BATTERY")
             }
 
             cmd.contains("call") || cmd.contains("phone karo") || cmd.contains("dial") -> {
@@ -406,10 +412,10 @@ class AssistantService : Service() {
 
                 if (contactName.isNotBlank()) {
                     val success = actionExecutor.callContact(contactName)
-                    if (success) speak("Calling $contactName, Sir.", "CALL")
+                    if (success) speak("Calling $contactName.", "CALL")
                     else speak("Sir, $contactName nahi mila.", "CALL_ERROR")
                 } else {
-                    speak("Sir, kisko call karna hai?", "CALL_EMPTY")
+                    speak("Kisko call karna hai?", "CALL_EMPTY")
                 }
             }
 
@@ -422,9 +428,9 @@ class AssistantService : Service() {
 
                 if (query.isNotBlank()) {
                     actionExecutor.playOnYoutube(query)
-                    speak("Playing $query, Sir.", "YOUTUBE")
+                    speak("Playing $query.", "YOUTUBE")
                 } else {
-                    speak("Sir, kya play karna hai?", "YOUTUBE_EMPTY")
+                    speak("Kya play karna hai?", "YOUTUBE_EMPTY")
                 }
             }
 
@@ -435,10 +441,10 @@ class AssistantService : Service() {
 
                 if (appName.isNotBlank()) {
                     val success = actionExecutor.openApp(appName)
-                    if (success) speak("Opening $appName, Sir.", "OPEN_APP")
+                    if (success) speak("Opening $appName.", "OPEN_APP")
                     else speak("Sir, $appName nahi mili.", "APP_ERROR")
                 } else {
-                    speak("Sir, kaunsi app kholni hai?", "APP_EMPTY")
+                    speak("Kaunsi app?", "APP_EMPTY")
                 }
             }
 
@@ -449,7 +455,7 @@ class AssistantService : Service() {
     }
 
     // =====================================================
-    // GROQ AI - MEMORY 100
+    // GROQ AI - FAST MODE
     // =====================================================
     private fun askGroqAI(question: String) {
         try {
@@ -460,16 +466,14 @@ class AssistantService : Service() {
                 put("role", "system")
                 put("content", "You are Jarvis, a smart, witty and friendly AI assistant for an Indian user. " +
                         "RULES: " +
-                        "1. Always reply in HINGLISH (Hindi + English mixed) using ROMAN script only. " +
+                        "1. Reply in HINGLISH (Hindi + English mixed) using ROMAN script only. " +
                         "2. Address the user as 'Sir' always. " +
-                        "3. Keep replies SHORT - max 2-3 sentences. " +
-                        "4. Be warm, sweet, and helpful like a close friend. " +
+                        "3. Keep replies VERY SHORT - MAX 1-2 sentences. " +
+                        "4. Be warm, sweet, and helpful. " +
                         "5. NEVER use Devanagari script - only Roman letters. " +
                         "6. No markdown, no bullet points - just plain speech. " +
-                        "7. You have FULL MEMORY of this conversation. Remember names, facts, mood, and context. " +
-                        "8. If user asks to teach English, be a patient teacher. " +
-                        "9. Be conversational - sometimes ask follow-up questions. " +
-                        "10. Voice is converted to text - user's words may be misspelled. Understand the INTENT and respond naturally.")
+                        "7. You have FULL MEMORY of this conversation. " +
+                        "8. Voice to text may have errors - understand the INTENT and respond.")
             })
 
             for (i in 0 until conversationHistory.length()) {
@@ -485,7 +489,7 @@ class AssistantService : Service() {
                 put("model", "openai/gpt-oss-20b")
                 put("messages", messages)
                 put("temperature", 0.7)
-                put("max_tokens", 250)
+                put("max_tokens", 120)  // ✅ 250 → 120 (short = fast)
             }
 
             val request = object : JsonObjectRequest(
@@ -503,11 +507,11 @@ class AssistantService : Service() {
                         addToHistory("assistant", aiReply)
                         speak(aiReply, "AI_REPLY")
                     } catch (e: Exception) {
-                        speak("Sorry Sir, samajh nahi paya.", "AI_ERROR")
+                        speak("Sorry Sir.", "AI_ERROR")
                     }
                 },
                 { error ->
-                    speak("Sorry Sir, connect nahi ho paya.", "AI_NETWORK_ERROR")
+                    speak("Sorry Sir, connect nahi.", "AI_NETWORK_ERROR")
                 }
             ) {
                 @Throws(AuthFailureError::class)
@@ -520,7 +524,7 @@ class AssistantService : Service() {
             }
             requestQueue.add(request)
         } catch (e: Exception) {
-            speak("Sorry Sir, kuch problem hai.", "AI_ERROR")
+            speak("Sorry Sir.", "AI_ERROR")
         }
     }
 
@@ -533,7 +537,6 @@ class AssistantService : Service() {
             while (conversationHistory.length() > MAX_HISTORY) {
                 conversationHistory.remove(0)
             }
-            android.util.Log.d("JARVIS_MEM", "History: ${conversationHistory.length()}/$MAX_HISTORY")
         } catch (_: Exception) {}
     }
 
