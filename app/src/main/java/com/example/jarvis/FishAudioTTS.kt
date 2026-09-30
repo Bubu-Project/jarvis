@@ -1,6 +1,7 @@
 package com.example.jarvis
 
 import android.content.Context
+import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.os.Handler
 import android.os.Looper
@@ -17,7 +18,7 @@ class FishAudioTTS(private val context: Context) {
 
     private val API_KEY = BuildConfig.FISH_AUDIO_API_KEY
 
-    // ✅ Pinky - Hindi female voice (Hinglish ke liye best)
+    // Pinky - Hindi female voice (Hinglish ke liye best)
     private val VOICE_ID = "3bdc0c48fd264887bb63511c3a258f25"
 
     private val MODEL = "s2.1-pro-free"
@@ -56,7 +57,8 @@ class FishAudioTTS(private val context: Context) {
                 "format": "mp3",
                 "mp3_bitrate": 128,
                 "normalize": true,
-                "latency": "normal"
+                "latency": "normal",
+                "speed": 1.2
             }
         """.trimIndent()
 
@@ -108,6 +110,13 @@ class FishAudioTTS(private val context: Context) {
                     handler.post {
                         try {
                             mediaPlayer = MediaPlayer().apply {
+                                // ✅ Audio attributes - media stream use kare
+                                val audioAttributes = AudioAttributes.Builder()
+                                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                                    .build()
+                                setAudioAttributes(audioAttributes)
+
                                 setDataSource(tempFile.absolutePath)
                                 setOnCompletionListener {
                                     isSpeaking = false
@@ -119,6 +128,8 @@ class FishAudioTTS(private val context: Context) {
                                     true
                                 }
                                 prepare()
+                                // ✅ VOLUME MAX KARO
+                                setVolume(1.0f, 1.0f)
                                 start()
                             }
                             Log.d("JARVIS_FISH", "Playing: ${audioBytes.size} bytes")
