@@ -27,7 +27,7 @@ import java.util.Locale
 class AssistantService : Service() {
 
     private lateinit var assemblyAISTT: AssemblyAISTT
-    private lateinit var deepgramTTS: DeepgramTTS
+    private lateinit var fishAudioTTS: FishAudioTTS
     private lateinit var audioManager: AudioManager
     private lateinit var actionExecutor: ActionExecutor
     private lateinit var requestQueue: RequestQueue
@@ -48,7 +48,7 @@ class AssistantService : Service() {
     private var lastProcessedText = ""
     private var lastProcessedTime = 0L
 
-    // ✅ MEMORY: 100 messages tak yaad rakhega
+    // MEMORY: 100 messages tak yaad rakhega
     private val conversationHistory = JSONArray()
     private val MAX_HISTORY = 100
 
@@ -56,7 +56,7 @@ class AssistantService : Service() {
         isAwake = false
     }
 
-    // ✅ STT WATCHDOG - 60 sec tak kuch na aaye toh restart
+    // STT WATCHDOG - 60 sec tak kuch na aaye toh restart
     private val sttWatchdog = Runnable {
         if (isListeningActive) {
             android.util.Log.d("JARVIS_STT", "Watchdog - restarting STT")
@@ -98,7 +98,7 @@ class AssistantService : Service() {
             actionExecutor = ActionExecutor(this)
             requestQueue = Volley.newRequestQueue(this)
             createNotification()
-            setupDeepgramTTS()
+            setupFishAudioTTS()
             setupCallReceiver()
             setupAssemblyAI()
             isListeningActive = true
@@ -108,19 +108,18 @@ class AssistantService : Service() {
         }
     }
 
-    // ✅ Watchdog reset - har transcript pe call hoga
     private fun resetSttWatchdog() {
         handler.removeCallbacks(sttWatchdog)
         handler.postDelayed(sttWatchdog, 60000)
     }
 
     // =====================================================
-    // DEEPGRAM TTS SETUP
+    // FISH AUDIO TTS SETUP
     // =====================================================
-    private fun setupDeepgramTTS() {
+    private fun setupFishAudioTTS() {
         try {
-            deepgramTTS = DeepgramTTS(this)
-            deepgramTTS.setListener(object : DeepgramTTS.TTSListener {
+            fishAudioTTS = FishAudioTTS(this)
+            fishAudioTTS.setListener(object : FishAudioTTS.TTSListener {
                 override fun onStart() {
                     handler.post { isSpeaking = true }
                 }
@@ -148,7 +147,7 @@ class AssistantService : Service() {
 
     private fun speak(text: String, id: String) {
         handler.post {
-            try { deepgramTTS.speak(text) } catch (e: Exception) {
+            try { fishAudioTTS.speak(text) } catch (e: Exception) {
                 android.util.Log.e("JARVIS_TTS", "Speak failed: ${e.message}")
             }
         }
@@ -183,7 +182,7 @@ class AssistantService : Service() {
     // TRANSCRIPT HANDLER with Barge-in
     // =====================================================
     private fun handleTranscript(text: String, isFinal: Boolean) {
-        resetSttWatchdog()  // ✅ Har transcript pe watchdog reset
+        resetSttWatchdog()
 
         val cleanText = text.lowercase(Locale.US).trim()
         if (cleanText.isBlank()) return
@@ -197,7 +196,7 @@ class AssistantService : Service() {
         // BARGE-IN
         if (isSpeaking) {
             android.util.Log.d("JARVIS_BARGEIN", "User interrupted!")
-            try { deepgramTTS.stop() } catch (_: Exception) {}
+            try { fishAudioTTS.stop() } catch (_: Exception) {}
             isSpeaking = false
         }
 
@@ -473,7 +472,6 @@ class AssistantService : Service() {
                         "10. Voice is converted to text - user's words may be misspelled. Understand the INTENT and respond naturally.")
             })
 
-            // ✅ 100 tak ki history bhej
             for (i in 0 until conversationHistory.length()) {
                 messages.put(conversationHistory.getJSONObject(i))
             }
@@ -532,7 +530,6 @@ class AssistantService : Service() {
                 put("role", role)
                 put("content", content)
             })
-            // ✅ 100 se zyada hui toh purane remove
             while (conversationHistory.length() > MAX_HISTORY) {
                 conversationHistory.remove(0)
             }
@@ -571,7 +568,7 @@ class AssistantService : Service() {
         handler.removeCallbacksAndMessages(null)
         clearConversationHistory()
         try { assemblyAISTT.stopListening() } catch (_: Exception) {}
-        try { deepgramTTS.stop() } catch (_: Exception) {}
+        try { fishAudioTTS.stop() } catch (_: Exception) {}
         try { unregisterReceiver(CallReceiver.instance) } catch (_: Exception) {}
     }
 }
