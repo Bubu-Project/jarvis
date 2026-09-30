@@ -18,6 +18,7 @@ android {
         buildConfigField "String", "GROQ_API_KEY", "\"${System.getenv('GROQ_API_KEY') ?: ''}\""
         buildConfigField "String", "OPENAI_API_KEY", "\"${System.getenv('OPENAI_API_KEY') ?: ''}\""
         buildConfigField "String", "DEEPGRAM_API_KEY", "\"${System.getenv('DEEPGRAM_API_KEY') ?: ''}\""
+        buildConfigField "String", "FISH_AUDIO_API_KEY", "\"${System.getenv('FISH_AUDIO_API_KEY') ?: ''}\""
     }
 
     buildFeatures {
