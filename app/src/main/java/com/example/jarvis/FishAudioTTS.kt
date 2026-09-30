@@ -18,8 +18,8 @@ class FishAudioTTS(private val context: Context) {
 
     private val API_KEY = BuildConfig.FISH_AUDIO_API_KEY
 
-    // Pinky - Hindi female voice (Hinglish ke liye best)
-    private val VOICE_ID = "3bdc0c48fd264887bb63511c3a258f25"
+    // ✅ Gigi Hindi - High-pitched, energetic young female (clear Indian accent)
+    private val VOICE_ID = "302daf5050404d27a1f32a594fee37f5"
 
     private val MODEL = "s2.1-pro-free"
 
@@ -110,7 +110,6 @@ class FishAudioTTS(private val context: Context) {
                     handler.post {
                         try {
                             mediaPlayer = MediaPlayer().apply {
-                                // ✅ Audio attributes - media stream use kare
                                 val audioAttributes = AudioAttributes.Builder()
                                     .setUsage(AudioAttributes.USAGE_MEDIA)
                                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
@@ -128,7 +127,6 @@ class FishAudioTTS(private val context: Context) {
                                     true
                                 }
                                 prepare()
-                                // ✅ VOLUME MAX KARO
                                 setVolume(1.0f, 1.0f)
                                 start()
                             }
