@@ -1,6 +1,7 @@
 package com.example.jarvis
 
 import android.util.Log
+import android.widget.Toast
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -9,7 +10,7 @@ import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-class XaiVoiceClient(private val apiKey: String) {
+class XaiVoiceClient(private val apiKey: String, private val context: android.content.Context) {
 
     private var webSocket: WebSocket? = null
     private val client = OkHttpClient.Builder()
@@ -28,12 +29,21 @@ class XaiVoiceClient(private val apiKey: String) {
     private var listener: XaiListener? = null
     fun setListener(l: XaiListener) { listener = l }
 
+    private fun showToast(msg: String) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+        }
+    }
+
     // =====================================================
     // STEP 1: Ephemeral Token Fetch
     // =====================================================
     fun connect() {
+        Log.d("JARVIS_XAI", "=== CONNECT START ===")
+        showToast("xAI: Getting token...")
+
         val url = "https://api.x.ai/v1/realtime/client_secrets"
-        
+
         val json = """
             {
                 "expires_after": {
@@ -74,31 +84,37 @@ class XaiVoiceClient(private val apiKey: String) {
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 Log.e("JARVIS_XAI", "Token fetch failed: ${e.message}")
+                showToast("xAI TOKEN FAIL: ${e.message}")
                 listener?.onError("Token fetch failed: ${e.message}")
             }
 
             override fun onResponse(call: Call, response: Response) {
                 if (!response.isSuccessful) {
-                    val err = response.body?.string() ?: ""
+                    val err = try { response.body?.string() ?: "" } catch (_: Exception) { "" }
                     Log.e("JARVIS_XAI", "Token error ${response.code}: $err")
+                    showToast("xAI TOKEN ${response.code}: ${err.take(80)}")
                     listener?.onError("Token error ${response.code}")
                     return
                 }
                 try {
                     val respBody = response.body?.string() ?: ""
+                    Log.d("JARVIS_XAI", "Token response: $respBody")
                     val json = JSONObject(respBody)
-                    val token = json.optString("value", 
-                        json.optString("client_secret", 
+                    val token = json.optString("value",
+                        json.optString("client_secret",
                             json.optJSONObject("client_secret")?.optString("value") ?: ""))
-                    
+
                     if (token.isBlank()) {
+                        showToast("xAI: Token empty")
                         listener?.onError("Token empty")
                         return
                     }
                     Log.d("JARVIS_XAI", "Token received")
+                    showToast("xAI: Token OK, connecting WS...")
                     connectWebSocket(token)
                 } catch (e: Exception) {
                     Log.e("JARVIS_XAI", "Token parse error: ${e.message}")
+                    showToast("xAI PARSE: ${e.message}")
                     listener?.onError("Token parse: ${e.message}")
                 }
             }
@@ -110,7 +126,7 @@ class XaiVoiceClient(private val apiKey: String) {
     // =====================================================
     private fun connectWebSocket(token: String) {
         val url = "wss://api.x.ai/v1/realtime?model=grok-voice-latest"
-        
+
         val request = Request.Builder()
             .url(url)
             .addHeader("Authorization", "Bearer $token")
@@ -119,7 +135,7 @@ class XaiVoiceClient(private val apiKey: String) {
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.d("JARVIS_XAI", "WebSocket connected")
-                // Session update bhejo
+                showToast("xAI: WS CONNECTED!")
                 sendSessionUpdate(webSocket)
                 listener?.onConnected()
             }
@@ -133,7 +149,9 @@ class XaiVoiceClient(private val apiKey: String) {
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.e("JARVIS_XAI", "WS failed: ${t.message}")
+                val code = response?.code ?: 0
+                Log.e("JARVIS_XAI", "WS failed: ${t.message} | Code: $code")
+                showToast("xAI WS FAIL: ${t.message} ($code)")
                 listener?.onError(t.message ?: "WS failed")
             }
 
@@ -161,7 +179,7 @@ class XaiVoiceClient(private val apiKey: String) {
         try {
             val json = JSONObject(text)
             val type = json.optString("type", "")
-            
+
             when (type) {
                 "response.audio_transcript.delta",
                 "response.output_audio_transcript.delta" -> {
@@ -176,6 +194,7 @@ class XaiVoiceClient(private val apiKey: String) {
                 "error" -> {
                     val err = json.optJSONObject("error")?.optString("message") ?: "Unknown error"
                     Log.e("JARVIS_XAI", "Server error: $err")
+                    showToast("xAI SERVER: ${err.take(80)}")
                     listener?.onError(err)
                 }
             }
@@ -184,7 +203,6 @@ class XaiVoiceClient(private val apiKey: String) {
         }
     }
 
-    // Audio bhejo (mic se)
     fun sendAudio(pcmBytes: ByteArray) {
         webSocket?.send(ByteString.of(*pcmBytes))
     }
