@@ -3,18 +3,15 @@ package com.example.jarvis
 import android.annotation.SuppressLint
 import android.media.AudioAttributes
 import android.media.AudioFormat
-import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 
 class XaiAudioManager {
 
     companion object {
-        private const val SAMPLE_RATE = 24000  // xAI uses 24kHz
+        private const val SAMPLE_RATE = 24000
         private const val CHANNEL_IN = AudioFormat.CHANNEL_IN_MONO
         private const val CHANNEL_OUT = AudioFormat.CHANNEL_OUT_MONO
         private const val ENCODING = AudioFormat.ENCODING_PCM_16BIT
@@ -26,8 +23,6 @@ class XaiAudioManager {
     private var isPlaying = false
     private var recordingThread: Thread? = null
 
-    private val handler = Handler(Looper.getMainLooper())
-
     interface AudioListener {
         fun onMicData(pcmBytes: ByteArray)
         fun onError(message: String)
@@ -36,16 +31,13 @@ class XaiAudioManager {
     private var listener: AudioListener? = null
     fun setListener(l: AudioListener) { listener = l }
 
-    // =====================================================
-    // MIC CAPTURE START
-    // =====================================================
     @SuppressLint("MissingPermission")
     fun startMicCapture() {
         if (isRecording) return
 
         try {
             val bufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_IN, ENCODING)
-            val actualBuffer = maxOf(bufferSize, 4096)
+            val actualBuffer = maxOf(bufferSize, 8192)
 
             audioRecord = AudioRecord(
                 MediaRecorder.AudioSource.VOICE_COMMUNICATION,
@@ -65,7 +57,6 @@ class XaiAudioManager {
             Log.d("JARVIS_XAI_AUDIO", "Mic capture started")
 
             recordingThread = Thread {
-                // 20ms chunks at 24kHz = 480 samples × 2 bytes = 960 bytes
                 val chunkSize = 960
                 val buffer = ByteArray(chunkSize)
                 while (isRecording) {
@@ -84,15 +75,12 @@ class XaiAudioManager {
         }
     }
 
-    // =====================================================
-    // SPEAKER PLAYBACK
-    // =====================================================
     fun startSpeaker() {
         if (isPlaying) return
 
         try {
             val bufferSize = AudioTrack.getMinBufferSize(SAMPLE_RATE, CHANNEL_OUT, ENCODING)
-            val actualBuffer = maxOf(bufferSize, 8192)
+            val actualBuffer = maxOf(bufferSize, 16384)
 
             audioTrack = AudioTrack.Builder()
                 .setAudioAttributes(
@@ -122,7 +110,6 @@ class XaiAudioManager {
         }
     }
 
-    // xAI se aaya audio play karo
     fun playAudio(pcmBytes: ByteArray) {
         try {
             audioTrack?.write(pcmBytes, 0, pcmBytes.size)
@@ -131,7 +118,6 @@ class XaiAudioManager {
         }
     }
 
-    // Barge-in ke liye - abhi baj raha audio clear karo
     fun stopPlayback() {
         try {
             audioTrack?.pause()
@@ -143,9 +129,6 @@ class XaiAudioManager {
         }
     }
 
-    // =====================================================
-    // STOP EVERYTHING
-    // =====================================================
     fun stopMic() {
         isRecording = false
         try { recordingThread?.join(500) } catch (_: Exception) {}
