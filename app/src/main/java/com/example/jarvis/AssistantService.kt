@@ -18,11 +18,11 @@ import androidx.core.app.NotificationCompat
 
 class AssistantService : Service() {
 
-    private lateinit var xaiClient: XaiVoiceClient
-    private lateinit var audioManager: XaiAudioManager
+    private lateinit var geminiClient: GeminiLiveClient
+    private lateinit var audioManager: GeminiAudioManager
     private lateinit var actionExecutor: ActionExecutor
 
-    private val XAI_API_KEY = BuildConfig.XAI_API_KEY
+    private val GEMINI_API_KEY = BuildConfig.GEMINI_API_KEY
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -59,73 +59,77 @@ class AssistantService : Service() {
             actionExecutor = ActionExecutor(this)
             createNotification()
             isListeningActive = true
-            startXaiSession()
+            startGeminiSession()
         } catch (e: Exception) {
             android.util.Log.e("JARVIS_DEBUG", "CRASH: ${e.message}")
             Toast.makeText(this, "Crash: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
-    private fun startXaiSession() {
-        audioManager = XaiAudioManager()
-        audioManager.setListener(object : XaiAudioManager.AudioListener {
+    private fun startGeminiSession() {
+        audioManager = GeminiAudioManager()
+        audioManager.setListener(object : GeminiAudioManager.AudioListener {
             override fun onMicData(pcmBytes: ByteArray) {
                 if (isSessionActive) {
-                    xaiClient.sendAudio(pcmBytes)
+                    geminiClient.sendAudio(pcmBytes)
                 }
             }
 
             override fun onError(message: String) {
-                android.util.Log.e("JARVIS_XAI_AUDIO", "Audio error: $message")
+                android.util.Log.e("JARVIS_GEMINI_AUDIO", "Audio: $message")
             }
         })
 
-        xaiClient = XaiVoiceClient(XAI_API_KEY, this)
-        xaiClient.setListener(object : XaiVoiceClient.XaiListener {
-            override fun onConnected() {
-                android.util.Log.d("JARVIS_XAI", "Session active!")
+        geminiClient = GeminiLiveClient(GEMINI_API_KEY, this)
+        geminiClient.setListener(object : GeminiLiveClient.GeminiListener {
+            override fun onReady() {
+                android.util.Log.d("JARVIS_GEMINI", "Ready!")
                 isSessionActive = true
                 handler.post {
                     audioManager.startSpeaker()
-                    audioManager.startMicCapture()
+                    audioManager.startMic()
                 }
             }
 
-            override fun onAudioReceived(audioData: ByteArray) {
-                audioManager.playAudio(audioData)
+            override fun onAudioReceived(pcmBytes: ByteArray) {
+                audioManager.playAudio(pcmBytes)
             }
 
-            override fun onTranscriptReceived(text: String, isFinal: Boolean) {
-                if (isFinal) {
-                    android.util.Log.d("JARVIS_XAI", "User said: $text")
-                    if (isDeviceCommand(text)) {
-                        handler.post {
-                            executeDeviceCommand(text)
-                        }
-                    }
+            override fun onUserTranscript(text: String) {
+                android.util.Log.d("JARVIS_GEMINI", "User: $text")
+            }
+
+            override fun onAITranscript(text: String) {
+                android.util.Log.d("JARVIS_GEMINI", "AI: $text")
+                // Check karo agar device command hai toh
+                if (isDeviceCommand(text)) {
+                    handler.post { executeDeviceCommand(text) }
                 }
+            }
+
+            override fun onInterrupted() {
+                android.util.Log.d("JARVIS_GEMINI", "Interrupted - flushing")
+                audioManager.flushPlayback()
             }
 
             override fun onError(message: String) {
-                android.util.Log.e("JARVIS_XAI", "Error: $message")
-                // Auto-reconnect hata diya debug ke liye
+                android.util.Log.e("JARVIS_GEMINI", "Error: $message")
             }
 
             override fun onDisconnected() {
-                android.util.Log.d("JARVIS_XAI", "Disconnected")
+                android.util.Log.d("JARVIS_GEMINI", "Disconnected")
                 isSessionActive = false
             }
         })
 
-        xaiClient.connect()
+        geminiClient.connect()
     }
 
     private fun isDeviceCommand(text: String): Boolean {
         val cmd = text.lowercase()
         val keywords = listOf(
             "flashlight", "torch", "call", "phone", "dial",
-            "youtube", "play", "gana", "song", "open", "kholo",
-            "battery", "lock"
+            "youtube", "play", "gana", "song", "open", "kholo", "battery"
         )
         return keywords.any { cmd.contains(it) }
     }
@@ -141,35 +145,27 @@ class AssistantService : Service() {
                     actionExecutor.toggleFlashlight(true)
                 }
             }
-
             cmd.contains("call") || cmd.contains("phone") -> {
                 val name = cmd
                     .replace("call", "").replace("karo", "")
                     .replace("phone", "").replace("to", "")
                     .replace("please", "").trim()
-                if (name.isNotBlank()) {
-                    actionExecutor.callContact(name)
-                }
+                if (name.isNotBlank()) actionExecutor.callContact(name)
             }
-
-            cmd.contains("youtube") || cmd.contains("play") || cmd.contains("gana") || cmd.contains("song") -> {
+            cmd.contains("youtube") || cmd.contains("play") ||
+            cmd.contains("gana") || cmd.contains("song") -> {
                 val query = cmd
                     .replace("play", "").replace("on youtube", "")
                     .replace("youtube", "").replace("song", "")
                     .replace("gana", "").replace("chalao", "")
                     .replace("please", "").trim()
-                if (query.isNotBlank()) {
-                    actionExecutor.playOnYoutube(query)
-                }
+                if (query.isNotBlank()) actionExecutor.playOnYoutube(query)
             }
-
             cmd.startsWith("open ") || cmd.contains("kholo") -> {
                 val app = cmd
                     .replace("open", "").replace("kholo", "")
                     .replace("please", "").trim()
-                if (app.isNotBlank()) {
-                    actionExecutor.openApp(app)
-                }
+                if (app.isNotBlank()) actionExecutor.openApp(app)
             }
         }
     }
@@ -186,7 +182,7 @@ class AssistantService : Service() {
 
         val notification: Notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle("Jarvis AI")
-            .setContentText("xAI Voice active")
+            .setContentText("Gemini Live active")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
             .build()
@@ -200,6 +196,6 @@ class AssistantService : Service() {
         isSessionActive = false
         handler.removeCallbacksAndMessages(null)
         try { audioManager.stopAll() } catch (_: Exception) {}
-        try { xaiClient.disconnect() } catch (_: Exception) {}
+        try { geminiClient.disconnect() } catch (_: Exception) {}
     }
 }
