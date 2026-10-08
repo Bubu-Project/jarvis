@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 
 class AssistantService : Service() {
@@ -20,7 +21,6 @@ class AssistantService : Service() {
     private lateinit var xaiClient: XaiVoiceClient
     private lateinit var audioManager: XaiAudioManager
     private lateinit var actionExecutor: ActionExecutor
-    private val wakeWordDetector = WakeWordDetector()
 
     private val XAI_API_KEY = BuildConfig.XAI_API_KEY
 
@@ -28,7 +28,6 @@ class AssistantService : Service() {
 
     private var isListeningActive = false
     private var isSessionActive = false
-    private var currentTranscript = StringBuilder()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -63,18 +62,14 @@ class AssistantService : Service() {
             startXaiSession()
         } catch (e: Exception) {
             android.util.Log.e("JARVIS_DEBUG", "CRASH: ${e.message}")
+            Toast.makeText(this, "Crash: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
-    // =====================================================
-    // xAI SESSION START
-    // =====================================================
     private fun startXaiSession() {
-        // Audio manager setup
         audioManager = XaiAudioManager()
         audioManager.setListener(object : XaiAudioManager.AudioListener {
             override fun onMicData(pcmBytes: ByteArray) {
-                // Mic se audio xAI ko bhejo
                 if (isSessionActive) {
                     xaiClient.sendAudio(pcmBytes)
                 }
@@ -85,28 +80,24 @@ class AssistantService : Service() {
             }
         })
 
-        // xAI Voice Client setup
-        xaiClient = XaiVoiceClient(XAI_API_KEY)
+        xaiClient = XaiVoiceClient(XAI_API_KEY, this)
         xaiClient.setListener(object : XaiVoiceClient.XaiListener {
             override fun onConnected() {
                 android.util.Log.d("JARVIS_XAI", "Session active!")
                 isSessionActive = true
                 handler.post {
-                    // Mic aur speaker start karo
                     audioManager.startSpeaker()
                     audioManager.startMicCapture()
                 }
             }
 
             override fun onAudioReceived(audioData: ByteArray) {
-                // xAI se aaya audio play karo
                 audioManager.playAudio(audioData)
             }
 
             override fun onTranscriptReceived(text: String, isFinal: Boolean) {
                 if (isFinal) {
-                    android.util.Log.d("JARVIS_XAI", "User: $text")
-                    // Command check kar - agar koi device action hai toh execute
+                    android.util.Log.d("JARVIS_XAI", "User said: $text")
                     if (isDeviceCommand(text)) {
                         handler.post {
                             executeDeviceCommand(text)
@@ -117,14 +108,7 @@ class AssistantService : Service() {
 
             override fun onError(message: String) {
                 android.util.Log.e("JARVIS_XAI", "Error: $message")
-                handler.post {
-                    handler.postDelayed({
-                        if (isListeningActive) {
-                            android.util.Log.d("JARVIS_XAI", "Reconnecting...")
-                            startXaiSession()
-                        }
-                    }, 3000)
-                }
+                // Auto-reconnect hata diya debug ke liye
             }
 
             override fun onDisconnected() {
@@ -136,15 +120,12 @@ class AssistantService : Service() {
         xaiClient.connect()
     }
 
-    // =====================================================
-    // DEVICE COMMANDS (Jarvis ke extra features)
-    // =====================================================
     private fun isDeviceCommand(text: String): Boolean {
         val cmd = text.lowercase()
         val keywords = listOf(
             "flashlight", "torch", "call", "phone", "dial",
             "youtube", "play", "gana", "song", "open", "kholo",
-            "time", "battery", "lock"
+            "battery", "lock"
         )
         return keywords.any { cmd.contains(it) }
     }
@@ -193,9 +174,6 @@ class AssistantService : Service() {
         }
     }
 
-    // =====================================================
-    // NOTIFICATION
-    // =====================================================
     private fun createNotification() {
         val channelId = "jarvis_channel"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
