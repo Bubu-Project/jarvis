@@ -5,7 +5,6 @@ import android.widget.Toast
 import okhttp3.*
 import okio.ByteString
 import org.json.JSONObject
-import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 class GeminiLiveClient(private val apiKey: String, private val context: android.content.Context) {
@@ -13,7 +12,8 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
     companion object {
         private const val WS_URL = "wss://generativelanguage.googleapis.com/ws/" +
                 "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
-        private const val MODEL = "models/gemini-2.0-flash-exp"
+        // Naya model (Sept 2026 release)
+        private const val MODEL = "models/gemini-3.1-flash-live-preview"
     }
 
     private var webSocket: WebSocket? = null
@@ -50,12 +50,16 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
         Log.d("JARVIS_GEMINI", "=== CONNECT START ===")
         showToast("Gemini: Connecting...")
 
-        val url = "$WS_URL?key=$apiKey"
+        // alt=websocket zaroori hai
+        val url = "$WS_URL?key=$apiKey&alt=websocket"
+        Log.d("JARVIS_GEMINI", "URL: ${url.take(80)}...")
+
         val request = Request.Builder().url(url).build()
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.d("JARVIS_GEMINI", "WebSocket opened")
+                showToast("Gemini: WS Open, setup bhej raha hoon...")
                 sendSetup(webSocket)
             }
 
@@ -69,13 +73,14 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 val code = response?.code ?: 0
-                Log.e("JARVIS_GEMINI", "WS failed: ${t.message} | Code: $code")
+                val body = try { response?.body?.string() ?: "" } catch (_: Exception) { "" }
+                Log.e("JARVIS_GEMINI", "WS failed: ${t.message} | Code: $code | Body: $body")
                 showToast("Gemini FAIL: ${t.message} ($code)")
                 listener?.onError(t.message ?: "WS failed")
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                Log.d("JARVIS_GEMINI", "WS closed: $code")
+                Log.d("JARVIS_GEMINI", "WS closed: $code - $reason")
                 listener?.onDisconnected()
             }
         })
@@ -145,6 +150,7 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
                     if (parts != null) {
                         for (i in 0 until parts.length()) {
                             val part = parts.getJSONObject(i)
+
                             // Audio data
                             if (part.has("inlineData")) {
                                 val inlineData = part.getJSONObject("inlineData")
@@ -157,6 +163,7 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
                                     listener?.onAudioReceived(audioBytes)
                                 }
                             }
+
                             // AI text transcript
                             if (part.has("text")) {
                                 val aiText = part.getString("text")
@@ -172,11 +179,6 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
                 if (serverContent.optBoolean("turnComplete", false)) {
                     Log.d("JARVIS_GEMINI", "Turn complete")
                 }
-            }
-
-            // User transcript
-            if (json.has("clientContent")) {
-                // Not used for input
             }
 
             // Error
