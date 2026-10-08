@@ -20,6 +20,7 @@ android {
         buildConfigField "String", "DEEPGRAM_API_KEY", "\"${System.getenv('DEEPGRAM_API_KEY') ?: ''}\""
         buildConfigField "String", "FISH_AUDIO_API_KEY", "\"${System.getenv('FISH_AUDIO_API_KEY') ?: ''}\""
         buildConfigField "String", "XAI_API_KEY", "\"${System.getenv('XAI_API_KEY') ?: ''}\""
+        buildConfigField "String", "GEMINI_API_KEY", "\"${System.getenv('GEMINI_API_KEY') ?: ''}\""
     }
 
     buildFeatures {
