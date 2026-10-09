@@ -37,13 +37,15 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
 
     private fun showToast(msg: String) {
         android.os.Handler(android.os.Looper.getMainLooper()).post {
-            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
         }
     }
 
+    // =====================================================
+    // CONNECT
+    // =====================================================
     fun connect() {
         DebugLogger.log("GEMINI", "=== CONNECT START ===")
-        showToast("Gemini: Connecting...")
 
         val url = "$WS_URL?key=$apiKey&alt=websocket"
         val request = Request.Builder().url(url).build()
@@ -55,7 +57,7 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                DebugLogger.log("GEMINI", "MSG: ${text.take(150)}")
+                DebugLogger.log("GEMINI", "MSG: ${text.take(200)}")
                 handleMessage(text)
             }
 
@@ -70,12 +72,15 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                DebugLogger.log("GEMINI", "WS closed: $code")
+                DebugLogger.log("GEMINI", "WS closed: $code - $reason")
                 listener?.onDisconnected()
             }
         })
     }
 
+    // =====================================================
+    // SETUP MESSAGE - VAD FIX
+    // =====================================================
     private fun sendSetup(ws: WebSocket) {
         val setup = """
         {
@@ -91,6 +96,15 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
                         }
                     }
                 },
+                "realtimeInputConfig": {
+                    "automaticActivityDetection": {
+                        "disabled": false,
+                        "startOfSpeechSensitivity": "START_SENSITIVITY_HIGH",
+                        "endOfSpeechSensitivity": "END_SENSITIVITY_HIGH",
+                        "prefixPaddingMs": 100,
+                        "silenceDurationMs": 500
+                    }
+                },
                 "systemInstruction": {
                     "parts": [{
                         "text": "You are Jarvis, a smart, witty and friendly AI assistant for an Indian user. Always reply in HINGLISH (Hindi + English mixed) using ROMAN script only. Address the user as 'Sir'. Keep replies SHORT - max 2-3 sentences. Be warm and helpful like a close friend."
@@ -101,13 +115,17 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
         """.trimIndent()
 
         ws.send(setup)
-        DebugLogger.log("GEMINI", "Setup sent")
+        DebugLogger.log("GEMINI", "Setup sent with VAD config")
     }
 
+    // =====================================================
+    // HANDLE MESSAGES
+    // =====================================================
     private fun handleMessage(text: String) {
         try {
             val json = JSONObject(text)
 
+            // Setup complete
             if (json.has("setupComplete")) {
                 isSetupComplete = true
                 DebugLogger.log("GEMINI", "Setup complete!")
@@ -115,14 +133,17 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
                 return
             }
 
+            // Server content (audio/text response)
             if (json.has("serverContent")) {
                 val sc = json.getJSONObject("serverContent")
 
+                // Interrupted (barge-in)
                 if (sc.optBoolean("interrupted", false)) {
                     DebugLogger.log("GEMINI", "Interrupted!")
                     listener?.onInterrupted()
                 }
 
+                // Model turn (AI response)
                 if (sc.has("modelTurn")) {
                     val mt = sc.getJSONObject("modelTurn")
                     val parts = mt.optJSONArray("parts")
@@ -132,6 +153,7 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
                         for (i in 0 until parts.length()) {
                             val part = parts.getJSONObject(i)
 
+                            // Audio data
                             if (part.has("inlineData")) {
                                 val inline = part.getJSONObject("inlineData")
                                 val mime = inline.optString("mimeType", "")
@@ -140,11 +162,12 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
 
                                 if (mime.startsWith("audio/") && data.isNotBlank()) {
                                     val bytes = android.util.Base64.decode(data, android.util.Base64.DEFAULT)
-                                    DebugLogger.log("GEMINI", "AUDIO decoded: ${bytes.size} bytes")
+                                    DebugLogger.log("GEMINI", "AUDIO decoded: ${bytes.size}b")
                                     listener?.onAudioReceived(bytes)
                                 }
                             }
 
+                            // AI text transcript
                             if (part.has("text")) {
                                 val aiText = part.getString("text")
                                 if (aiText.isNotBlank()) {
@@ -155,11 +178,17 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
                         }
                     }
                 }
+
+                // Turn complete
+                if (sc.optBoolean("turnComplete", false)) {
+                    DebugLogger.log("GEMINI", "Turn complete")
+                }
             }
 
+            // Error
             if (json.has("error")) {
                 val err = json.getJSONObject("error").optString("message", "Unknown")
-                DebugLogger.log("GEMINI", "ERROR: $err")
+                DebugLogger.log("GEMINI", "ERROR: ${err.take(100)}")
                 listener?.onError(err)
             }
 
@@ -168,10 +197,11 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
         }
     }
 
+    // =====================================================
+    // SEND AUDIO (mic se 16kHz PCM)
+    // =====================================================
     fun sendAudio(pcmBytes: ByteArray) {
         if (!isSetupComplete) return
-
-        DebugLogger.log("GEMINI", "Send audio: ${pcmBytes.size}b")
 
         try {
             val base64 = android.util.Base64.encodeToString(pcmBytes, android.util.Base64.NO_WRAP)
