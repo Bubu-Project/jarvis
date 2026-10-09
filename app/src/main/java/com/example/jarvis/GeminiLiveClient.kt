@@ -37,7 +37,7 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
 
     private fun showToast(msg: String) {
         android.os.Handler(android.os.Looper.getMainLooper()).post {
-            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
         }
     }
 
@@ -46,6 +46,7 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
     // =====================================================
     fun connect() {
         DebugLogger.log("GEMINI", "=== CONNECT START ===")
+        showToast("Gemini: Connecting...")
 
         val url = "$WS_URL?key=$apiKey&alt=websocket"
         val request = Request.Builder().url(url).build()
@@ -57,29 +58,38 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                DebugLogger.log("GEMINI", "MSG: ${text.take(200)}")
+                DebugLogger.log("GEMINI", "MSG: ${text.take(250)}")
                 handleMessage(text)
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                DebugLogger.log("GEMINI", "BINARY: ${bytes.size} bytes")
                 handleMessage(bytes.utf8())
+            }
+
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                DebugLogger.log("GEMINI", "CLOSING: $code - $reason")
+                showToast("Gemini Closing: $code - ${reason.take(60)}")
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 val code = response?.code ?: 0
-                DebugLogger.log("GEMINI", "FAIL: ${t.message} ($code)")
+                val body = try { response?.body?.string() ?: "" } catch (_: Exception) { "" }
+                DebugLogger.log("GEMINI", "FAIL: ${t.message} | Code: $code | Body: ${body.take(150)}")
+                showToast("Gemini FAIL: ${t.message} ($code)")
                 listener?.onError(t.message ?: "WS failed")
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                DebugLogger.log("GEMINI", "WS closed: $code - $reason")
+                DebugLogger.log("GEMINI", "WS CLOSED: $code - $reason")
+                showToast("Gemini Closed: $code - ${reason.take(60)}")
                 listener?.onDisconnected()
             }
         })
     }
 
     // =====================================================
-    // SETUP MESSAGE
+    // SETUP MESSAGE - VAD FIX
     // =====================================================
     private fun sendSetup(ws: WebSocket) {
         val setup = """
@@ -99,10 +109,10 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
                 "realtimeInputConfig": {
                     "automaticActivityDetection": {
                         "disabled": false,
-                        "startOfSpeechSensitivity": "START_SENSITIVITY_HIGH",
-                        "endOfSpeechSensitivity": "END_SENSITIVITY_HIGH",
-                        "prefixPaddingMs": 100,
-                        "silenceDurationMs": 500
+                        "startOfSpeechSensitivity": "START_SENSITIVITY_LOW",
+                        "endOfSpeechSensitivity": "END_SENSITIVITY_LOW",
+                        "prefixPaddingMs": 200,
+                        "silenceDurationMs": 1500
                     }
                 },
                 "systemInstruction": {
@@ -115,7 +125,7 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
         """.trimIndent()
 
         ws.send(setup)
-        DebugLogger.log("GEMINI", "Setup sent with VAD config")
+        DebugLogger.log("GEMINI", "Setup sent - VAD: silence=1500ms, LOW sensitivity")
     }
 
     // =====================================================
@@ -125,25 +135,22 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
         try {
             val json = JSONObject(text)
 
-            // Setup complete
             if (json.has("setupComplete")) {
                 isSetupComplete = true
                 DebugLogger.log("GEMINI", "Setup complete!")
+                showToast("Gemini: Ready!")
                 listener?.onReady()
                 return
             }
 
-            // Server content (audio/text response)
             if (json.has("serverContent")) {
                 val sc = json.getJSONObject("serverContent")
 
-                // Interrupted (barge-in)
                 if (sc.optBoolean("interrupted", false)) {
                     DebugLogger.log("GEMINI", "Interrupted!")
                     listener?.onInterrupted()
                 }
 
-                // Model turn (AI response)
                 if (sc.has("modelTurn")) {
                     val mt = sc.getJSONObject("modelTurn")
                     val parts = mt.optJSONArray("parts")
@@ -153,7 +160,6 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
                         for (i in 0 until parts.length()) {
                             val part = parts.getJSONObject(i)
 
-                            // Audio data
                             if (part.has("inlineData")) {
                                 val inline = part.getJSONObject("inlineData")
                                 val mime = inline.optString("mimeType", "")
@@ -167,7 +173,6 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
                                 }
                             }
 
-                            // AI text transcript
                             if (part.has("text")) {
                                 val aiText = part.getString("text")
                                 if (aiText.isNotBlank()) {
@@ -179,16 +184,16 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
                     }
                 }
 
-                // Turn complete
                 if (sc.optBoolean("turnComplete", false)) {
                     DebugLogger.log("GEMINI", "Turn complete")
                 }
             }
 
-            // Error
             if (json.has("error")) {
                 val err = json.getJSONObject("error").optString("message", "Unknown")
-                DebugLogger.log("GEMINI", "ERROR: ${err.take(100)}")
+                val code = json.getJSONObject("error").optInt("code", 0)
+                DebugLogger.log("GEMINI", "SERVER ERROR: $code - ${err.take(150)}")
+                showToast("Gemini Error $code: ${err.take(80)}")
                 listener?.onError(err)
             }
 
@@ -198,7 +203,7 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
     }
 
     // =====================================================
-    // SEND AUDIO - NAYA FORMAT (mediaChunks deprecated)
+    // SEND AUDIO - NAYA FORMAT
     // =====================================================
     fun sendAudio(pcmBytes: ByteArray) {
         if (!isSetupComplete) return
@@ -224,7 +229,7 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
 
     fun disconnect() {
         isSetupComplete = false
-        try { webSocket?.close(1000, "closing") } catch (_: Exception) {}
+        try { webSocket?.close(1000, "user stopped") } catch (_: Exception) {}
         webSocket = null
     }
 }
