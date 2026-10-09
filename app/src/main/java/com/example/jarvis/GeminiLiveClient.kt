@@ -79,7 +79,7 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
     }
 
     // =====================================================
-    // SETUP MESSAGE - VAD FIX
+    // SETUP MESSAGE
     // =====================================================
     private fun sendSetup(ws: WebSocket) {
         val setup = """
@@ -198,7 +198,7 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
     }
 
     // =====================================================
-    // SEND AUDIO (mic se 16kHz PCM)
+    // SEND AUDIO - NAYA FORMAT (mediaChunks deprecated)
     // =====================================================
     fun sendAudio(pcmBytes: ByteArray) {
         if (!isSetupComplete) return
@@ -208,10 +208,10 @@ class GeminiLiveClient(private val apiKey: String, private val context: android.
             val json = """
             {
                 "realtimeInput": {
-                    "mediaChunks": [{
-                        "mimeType": "audio/pcm;rate=16000",
-                        "data": "$base64"
-                    }]
+                    "audio": {
+                        "data": "$base64",
+                        "mimeType": "audio/pcm;rate=16000"
+                    }
                 }
             }
             """.trimIndent()
