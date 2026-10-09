@@ -15,18 +15,25 @@ class MainActivity : AppCompatActivity() {
 
     private val permissionCode = 100
     private lateinit var statusText: TextView
+    private lateinit var debugText: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        statusText = findViewById(R.id.statusText) // Make sure this ID exists in activity_main.xml
+        statusText = findViewById(R.id.statusText)
+        debugText = findViewById(R.id.debugText)
+
+        // Debug logger setup
+        DebugLogger.setListener { msg ->
+            runOnUiThread {
+                debugText.append("$msg\n")
+            }
+        }
+
         requestAllPermissions()
 
-        val startButton = findViewById<Button>(R.id.startButton)
-        val stopButton = findViewById<Button>(R.id.stopButton)
-
-        startButton.setOnClickListener {
+        findViewById<Button>(R.id.startButton).setOnClickListener {
             val intent = Intent(this, AssistantService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(intent)
@@ -34,12 +41,14 @@ class MainActivity : AppCompatActivity() {
                 startService(intent)
             }
             statusText.text = "Jarvis is running..."
+            DebugLogger.log("JARVIS_APP", "Service started")
         }
 
-        stopButton.setOnClickListener {
+        findViewById<Button>(R.id.stopButton).setOnClickListener {
             val intent = Intent(this, AssistantService::class.java)
             stopService(intent)
             statusText.text = "Jarvis is not running."
+            DebugLogger.log("JARVIS_APP", "Service stopped")
         }
     }
 
