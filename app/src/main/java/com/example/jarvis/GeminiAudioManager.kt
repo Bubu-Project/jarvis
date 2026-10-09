@@ -3,7 +3,6 @@ package com.example.jarvis
 import android.annotation.SuppressLint
 import android.media.AudioAttributes
 import android.media.AudioFormat
-import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
@@ -25,8 +24,6 @@ class GeminiAudioManager {
     private var isPlaying = false
     private var recordingThread: Thread? = null
 
-    private var totalBytesPlayed = 0L
-
     interface AudioListener {
         fun onMicData(pcmBytes: ByteArray)
         fun onError(message: String)
@@ -47,7 +44,7 @@ class GeminiAudioManager {
             val actualBuffer = maxOf(bufferSize, 8192)
 
             audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                MediaRecorder.AudioSource.MIC,   // ✅ Changed from VOICE_COMMUNICATION
                 INPUT_RATE,
                 CHANNEL_IN,
                 ENCODING,
@@ -90,7 +87,7 @@ class GeminiAudioManager {
 
         try {
             val bufferSize = AudioTrack.getMinBufferSize(OUTPUT_RATE, CHANNEL_OUT, ENCODING)
-            val actualBuffer = maxOf(bufferSize, 32768)  // Bigger buffer for smooth playback
+            val actualBuffer = maxOf(bufferSize, 8192)   // ✅ Smaller buffer
 
             audioTrack = AudioTrack.Builder()
                 .setAudioAttributes(
@@ -118,7 +115,6 @@ class GeminiAudioManager {
             audioTrack?.play()
             audioTrack?.setVolume(1.0f)
             isPlaying = true
-            totalBytesPlayed = 0L
             Log.d("JARVIS_GEMINI_AUDIO", "Speaker started OK, buffer: $actualBuffer")
 
         } catch (e: Exception) {
@@ -134,8 +130,10 @@ class GeminiAudioManager {
 
         try {
             val written = audioTrack?.write(pcmBytes, 0, pcmBytes.size) ?: 0
-            totalBytesPlayed += written
-            Log.d("JARVIS_GEMINI_AUDIO", "Played: $written bytes (total: $totalBytesPlayed)")
+            // ✅ Logging add kiya
+            if (written > 0) {
+                Log.d("JARVIS_GEMINI_AUDIO", "Audio written: $written bytes")
+            }
         } catch (e: Exception) {
             Log.e("JARVIS_GEMINI_AUDIO", "Play error: ${e.message}")
         }
@@ -147,7 +145,6 @@ class GeminiAudioManager {
             audioTrack?.pause()
             audioTrack?.flush()
             audioTrack?.play()
-            totalBytesPlayed = 0L
             Log.d("JARVIS_GEMINI_AUDIO", "Flushed (barge-in)")
         } catch (e: Exception) {
             Log.e("JARVIS_GEMINI_AUDIO", "Flush error: ${e.message}")
