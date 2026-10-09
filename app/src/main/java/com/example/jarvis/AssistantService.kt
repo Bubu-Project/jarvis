@@ -13,7 +13,6 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
-import android.widget.Toast
 import androidx.core.app.NotificationCompat
 
 class AssistantService : Service() {
@@ -23,7 +22,6 @@ class AssistantService : Service() {
     private lateinit var actionExecutor: ActionExecutor
 
     private val GEMINI_API_KEY = BuildConfig.GEMINI_API_KEY
-
     private val handler = Handler(Looper.getMainLooper())
 
     private var isListeningActive = false
@@ -59,10 +57,10 @@ class AssistantService : Service() {
             actionExecutor = ActionExecutor(this)
             createNotification()
             isListeningActive = true
+            DebugLogger.log("SERVICE", "onCreate started")
             startGeminiSession()
         } catch (e: Exception) {
-            android.util.Log.e("JARVIS_DEBUG", "CRASH: ${e.message}")
-            Toast.makeText(this, "Crash: ${e.message}", Toast.LENGTH_LONG).show()
+            DebugLogger.log("SERVICE", "CRASH: ${e.message}")
         }
     }
 
@@ -76,18 +74,30 @@ class AssistantService : Service() {
             }
 
             override fun onError(message: String) {
-                android.util.Log.e("JARVIS_GEMINI_AUDIO", "Audio: $message")
+                DebugLogger.log("AUDIO", "Error: $message")
             }
         })
 
         geminiClient = GeminiLiveClient(GEMINI_API_KEY, this)
         geminiClient.setListener(object : GeminiLiveClient.GeminiListener {
             override fun onReady() {
-                android.util.Log.d("JARVIS_GEMINI", "Ready!")
+                DebugLogger.log("SERVICE", "onReady CALLED")
                 isSessionActive = true
-                handler.post {
+
+                try {
+                    DebugLogger.log("SERVICE", "Starting speaker...")
                     audioManager.startSpeaker()
+                    DebugLogger.log("SERVICE", "Speaker OK")
+                } catch (e: Exception) {
+                    DebugLogger.log("SERVICE", "Speaker FAIL: ${e.message}")
+                }
+
+                try {
+                    DebugLogger.log("SERVICE", "Starting mic...")
                     audioManager.startMic()
+                    DebugLogger.log("SERVICE", "Mic OK")
+                } catch (e: Exception) {
+                    DebugLogger.log("SERVICE", "Mic FAIL: ${e.message}")
                 }
             }
 
@@ -96,28 +106,27 @@ class AssistantService : Service() {
             }
 
             override fun onUserTranscript(text: String) {
-                android.util.Log.d("JARVIS_GEMINI", "User: $text")
+                DebugLogger.log("SERVICE", "User: ${text.take(60)}")
             }
 
             override fun onAITranscript(text: String) {
-                android.util.Log.d("JARVIS_GEMINI", "AI: $text")
-                // Check karo agar device command hai toh
+                DebugLogger.log("SERVICE", "AI: ${text.take(60)}")
                 if (isDeviceCommand(text)) {
                     handler.post { executeDeviceCommand(text) }
                 }
             }
 
             override fun onInterrupted() {
-                android.util.Log.d("JARVIS_GEMINI", "Interrupted - flushing")
+                DebugLogger.log("SERVICE", "Interrupted")
                 audioManager.flushPlayback()
             }
 
             override fun onError(message: String) {
-                android.util.Log.e("JARVIS_GEMINI", "Error: $message")
+                DebugLogger.log("SERVICE", "Error: $message")
             }
 
             override fun onDisconnected() {
-                android.util.Log.d("JARVIS_GEMINI", "Disconnected")
+                DebugLogger.log("SERVICE", "Disconnected")
                 isSessionActive = false
             }
         })
@@ -129,13 +138,14 @@ class AssistantService : Service() {
         val cmd = text.lowercase()
         val keywords = listOf(
             "flashlight", "torch", "call", "phone", "dial",
-            "youtube", "play", "gana", "song", "open", "kholo", "battery"
+            "youtube", "play", "gana", "song", "open", "kholo"
         )
         return keywords.any { cmd.contains(it) }
     }
 
     private fun executeDeviceCommand(text: String) {
         val cmd = text.lowercase().trim()
+        DebugLogger.log("CMD", "Executing: ${cmd.take(60)}")
 
         when {
             cmd.contains("flashlight") || cmd.contains("torch") -> {
