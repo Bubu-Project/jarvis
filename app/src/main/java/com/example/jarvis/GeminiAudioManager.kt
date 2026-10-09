@@ -6,13 +6,12 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
-import android.util.Log
 
 class GeminiAudioManager {
 
     companion object {
-        private const val INPUT_RATE = 16000   // Mic input for Gemini
-        private const val OUTPUT_RATE = 24000  // Gemini audio output
+        private const val INPUT_RATE = 16000
+        private const val OUTPUT_RATE = 24000
         private const val CHANNEL_IN = AudioFormat.CHANNEL_IN_MONO
         private const val CHANNEL_OUT = AudioFormat.CHANNEL_OUT_MONO
         private const val ENCODING = AudioFormat.ENCODING_PCM_16BIT
@@ -41,10 +40,10 @@ class GeminiAudioManager {
 
         try {
             val bufferSize = AudioRecord.getMinBufferSize(INPUT_RATE, CHANNEL_IN, ENCODING)
-            val actualBuffer = maxOf(bufferSize, 8192)
+            val actualBuffer = maxOf(bufferSize, 16384)
 
             audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.MIC,   // ✅ Changed from VOICE_COMMUNICATION
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
                 INPUT_RATE,
                 CHANNEL_IN,
                 ENCODING,
@@ -52,29 +51,40 @@ class GeminiAudioManager {
             )
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                Log.e("JARVIS_GEMINI_AUDIO", "Mic init FAILED")
+                DebugLogger.log("AUDIO", "Mic init FAILED")
                 listener?.onError("Mic init failed")
                 return
             }
 
             audioRecord?.startRecording()
             isRecording = true
-            Log.d("JARVIS_GEMINI_AUDIO", "Mic started OK")
+            DebugLogger.log("AUDIO", "Mic started, state=${audioRecord?.recordingState}")
 
             recordingThread = Thread {
-                val chunkSize = 3200  // 100ms at 16kHz
+                val chunkSize = 3200
                 val buffer = ByteArray(chunkSize)
+                var readCount = 0
                 while (isRecording) {
-                    val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
-                    if (read > 0) {
-                        listener?.onMicData(buffer.copyOf(read))
+                    try {
+                        val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
+                        if (read > 0) {
+                            readCount++
+                            if (readCount % 10 == 0) {
+                                DebugLogger.log("AUDIO", "Mic read: $read b (total: $readCount)")
+                            }
+                            listener?.onMicData(buffer.copyOf(read))
+                        } else if (read < 0) {
+                            DebugLogger.log("AUDIO", "Mic read ERROR: $read")
+                        }
+                    } catch (e: Exception) {
+                        DebugLogger.log("AUDIO", "Read exception: ${e.message}")
                     }
                 }
             }
             recordingThread?.start()
 
         } catch (e: Exception) {
-            Log.e("JARVIS_GEMINI_AUDIO", "Mic error: ${e.message}")
+            DebugLogger.log("AUDIO", "Mic error: ${e.message}")
             listener?.onError(e.message ?: "Mic error")
         }
     }
@@ -87,7 +97,7 @@ class GeminiAudioManager {
 
         try {
             val bufferSize = AudioTrack.getMinBufferSize(OUTPUT_RATE, CHANNEL_OUT, ENCODING)
-            val actualBuffer = maxOf(bufferSize, 8192)   // ✅ Smaller buffer
+            val actualBuffer = maxOf(bufferSize, 8192)
 
             audioTrack = AudioTrack.Builder()
                 .setAudioAttributes(
@@ -108,47 +118,43 @@ class GeminiAudioManager {
                 .build()
 
             if (audioTrack?.state != AudioTrack.STATE_INITIALIZED) {
-                Log.e("JARVIS_GEMINI_AUDIO", "Speaker init FAILED")
+                DebugLogger.log("AUDIO", "Speaker init FAILED")
                 return
             }
 
             audioTrack?.play()
             audioTrack?.setVolume(1.0f)
             isPlaying = true
-            Log.d("JARVIS_GEMINI_AUDIO", "Speaker started OK, buffer: $actualBuffer")
+            DebugLogger.log("AUDIO", "Speaker started OK")
 
         } catch (e: Exception) {
-            Log.e("JARVIS_GEMINI_AUDIO", "Speaker error: ${e.message}")
+            DebugLogger.log("AUDIO", "Speaker error: ${e.message}")
         }
     }
 
     fun playAudio(pcmBytes: ByteArray) {
         if (!isPlaying || audioTrack == null) {
-            Log.e("JARVIS_GEMINI_AUDIO", "Play skipped: playing=$isPlaying, track=${audioTrack != null}")
+            DebugLogger.log("AUDIO", "Play skipped: playing=$isPlaying")
             return
         }
 
         try {
             val written = audioTrack?.write(pcmBytes, 0, pcmBytes.size) ?: 0
-            // ✅ Logging add kiya
             if (written > 0) {
-                Log.d("JARVIS_GEMINI_AUDIO", "Audio written: $written bytes")
+                DebugLogger.log("AUDIO", "Played: $written bytes")
             }
         } catch (e: Exception) {
-            Log.e("JARVIS_GEMINI_AUDIO", "Play error: ${e.message}")
+            DebugLogger.log("AUDIO", "Play error: ${e.message}")
         }
     }
 
-    // Barge-in - Gemini ne interrupt kiya
     fun flushPlayback() {
         try {
             audioTrack?.pause()
             audioTrack?.flush()
             audioTrack?.play()
-            Log.d("JARVIS_GEMINI_AUDIO", "Flushed (barge-in)")
-        } catch (e: Exception) {
-            Log.e("JARVIS_GEMINI_AUDIO", "Flush error: ${e.message}")
-        }
+            DebugLogger.log("AUDIO", "Flushed")
+        } catch (_: Exception) {}
     }
 
     fun stopMic() {
@@ -160,7 +166,6 @@ class GeminiAudioManager {
             audioRecord?.release()
         } catch (_: Exception) {}
         audioRecord = null
-        Log.d("JARVIS_GEMINI_AUDIO", "Mic stopped")
     }
 
     fun stopSpeaker() {
@@ -170,7 +175,6 @@ class GeminiAudioManager {
             audioTrack?.release()
         } catch (_: Exception) {}
         audioTrack = null
-        Log.d("JARVIS_GEMINI_AUDIO", "Speaker stopped")
     }
 
     fun stopAll() {
