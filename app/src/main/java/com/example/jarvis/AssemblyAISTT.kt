@@ -37,7 +37,6 @@ class AssemblyAISTT(private val context: Context) {
         fetchTokenAndConnect()
     }
 
-    // ✅ No-op - mic always listens (barge-in ke liye)
     fun pauseStreaming() {
         // No-op
     }
@@ -84,10 +83,11 @@ class AssemblyAISTT(private val context: Context) {
                 .readTimeout(0, TimeUnit.MILLISECONDS)
                 .build()
 
+            // 🔥 यहाँ बदलाव किया गया है: english की जगह multilingual
             val url = "wss://streaming.assemblyai.com/v3/ws" +
                     "?sample_rate=16000" +
                     "&encoding=pcm_s16le" +
-                    "&speech_model=universal-streaming-english" +
+                    "&speech_model=universal-streaming-multilingual" + 
                     "&token=$token"
 
             val request = Request.Builder().url(url).build()
