@@ -17,15 +17,12 @@ import androidx.core.app.NotificationCompat
 
 class AssistantService : Service() {
 
-    private lateinit var geminiClient: GeminiLiveClient
-    private lateinit var audioManager: GeminiAudioManager
+    // 🔥 Gemini को हटा दिया गया है
+    private lateinit var apiClient: JarvisApiClient
     private lateinit var actionExecutor: ActionExecutor
 
-    private val GEMINI_API_KEY = BuildConfig.GEMINI_API_KEY
     private val handler = Handler(Looper.getMainLooper())
-
     private var isListeningActive = false
-    private var isSessionActive = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -55,91 +52,79 @@ class AssistantService : Service() {
         super.onCreate()
         try {
             actionExecutor = ActionExecutor(this)
+            apiClient = JarvisApiClient() // अपना नया API क्लाइंट इनिशियलाइज किया
             createNotification()
             isListeningActive = true
-            DebugLogger.log("SERVICE", "onCreate started")
-            startGeminiSession()
+            DebugLogger.log("SERVICE", "onCreate started - Gemini Removed")
+            
+            startCustomJarvisSystem()
         } catch (e: Exception) {
             DebugLogger.log("SERVICE", "CRASH: ${e.message}")
         }
     }
 
-    private fun startGeminiSession() {
-        audioManager = GeminiAudioManager()
-        audioManager.setListener(object : GeminiAudioManager.AudioListener {
-            override fun onMicData(pcmBytes: ByteArray) {
-                if (isSessionActive) {
-                    geminiClient.sendAudio(pcmBytes)
-                }
+    private fun startCustomJarvisSystem() {
+        DebugLogger.log("SERVICE", "Starting Custom Jarvis System...")
+        
+        // ========================================================
+        // 🚨 यहाँ तू अपना Deepgram या AssemblyAI (STT) शुरू करेगा
+        // जो तेरी आवाज़ सुनकर टेक्स्ट बनाएगा और onUserSpoke() को भेजेगा
+        // ========================================================
+        
+        simulateListening() // अभी के लिए यह डमी फंक्शन चला रहे हैं
+    }
+
+    // यह सिर्फ टेस्टिंग के लिए है। बाद में इसे STT से रिप्लेस करना।
+    private fun simulateListening() {
+        DebugLogger.log("MIC", "Listening...")
+        val userText = "नमस्ते जार्विस" 
+        onUserSpoke(userText)
+    }
+
+    // 🔥 यह फंक्शन तब कॉल होगा जब यूजर कुछ बोलेगा
+    private fun onUserSpoke(text: String) {
+        DebugLogger.log("SERVICE", "User said: $text")
+        
+        if (isDeviceCommand(text)) {
+            handler.post { executeDeviceCommand(text) }
+            return
+        }
+
+        // अपने कागल सर्वर (JarvisApiClient) को टेक्स्ट भेजो
+        apiClient.sendMessage(
+            text = text,
+            onResponse = { reply ->
+                DebugLogger.log("SERVICE", "AI: $reply")
+                speakResponse(reply)
+            },
+            onError = { error ->
+                DebugLogger.log("SERVICE", "API Error: $error")
             }
+        )
+    }
 
-            override fun onError(message: String) {
-                DebugLogger.log("AUDIO", "Error: $message")
-            }
-        })
-
-        geminiClient = GeminiLiveClient(GEMINI_API_KEY, this)
-        geminiClient.setListener(object : GeminiLiveClient.GeminiListener {
-            override fun onReady() {
-                DebugLogger.log("SERVICE", "onReady CALLED")
-                isSessionActive = true
-
-                try {
-                    DebugLogger.log("SERVICE", "Starting speaker...")
-                    audioManager.startSpeaker()
-                    DebugLogger.log("SERVICE", "Speaker OK")
-                } catch (e: Exception) {
-                    DebugLogger.log("SERVICE", "Speaker FAIL: ${e.message}")
-                }
-
-                try {
-                    DebugLogger.log("SERVICE", "Starting mic...")
-                    audioManager.startMic()
-                    DebugLogger.log("SERVICE", "Mic OK")
-                } catch (e: Exception) {
-                    DebugLogger.log("SERVICE", "Mic FAIL: ${e.message}")
-                }
-            }
-
-            override fun onAudioReceived(pcmBytes: ByteArray) {
-                audioManager.playAudio(pcmBytes)
-            }
-
-            override fun onUserTranscript(text: String) {
-                DebugLogger.log("SERVICE", "User: ${text.take(60)}")
-            }
-
-            override fun onAITranscript(text: String) {
-                DebugLogger.log("SERVICE", "AI: ${text.take(60)}")
-                if (isDeviceCommand(text)) {
-                    handler.post { executeDeviceCommand(text) }
-                }
-            }
-
-            override fun onInterrupted() {
-                DebugLogger.log("SERVICE", "Interrupted")
-                audioManager.flushPlayback()
-            }
-
-            override fun onError(message: String) {
-                DebugLogger.log("SERVICE", "Error: $message")
-            }
-
-            override fun onDisconnected() {
-                DebugLogger.log("SERVICE", "Disconnected")
-                isSessionActive = false
-            }
-        })
-
-        geminiClient.connect()
+    // 🔥 यह फंक्शन जार्विस के जवाब को आवाज़ में बदलेगा
+    private fun speakResponse(responseText: String) {
+        DebugLogger.log("TTS", "Speaking: $responseText")
+        
+        // ========================================================
+        // 🚨 यहाँ तू अपनी FishAudioTTS या ElevenLabsTTS लगाएगा
+        // ========================================================
+        
+        /* 
+        val tts = FishAudioTTS()
+        tts.speak(responseText) { 
+            handler.post { simulateListening() } // बोलने के बाद फिर सुनो
+        }
+        */
+        
+        // अभी के लिए 3 सेकंड बाद फिर से सुनना शुरू कर देंगे
+        handler.postDelayed({ simulateListening() }, 3000) 
     }
 
     private fun isDeviceCommand(text: String): Boolean {
         val cmd = text.lowercase()
-        val keywords = listOf(
-            "flashlight", "torch", "call", "phone", "dial",
-            "youtube", "play", "gana", "song", "open", "kholo"
-        )
+        val keywords = listOf("flashlight", "torch", "call", "phone", "dial", "youtube", "play", "gana", "song", "open", "kholo")
         return keywords.any { cmd.contains(it) }
     }
 
@@ -156,25 +141,15 @@ class AssistantService : Service() {
                 }
             }
             cmd.contains("call") || cmd.contains("phone") -> {
-                val name = cmd
-                    .replace("call", "").replace("karo", "")
-                    .replace("phone", "").replace("to", "")
-                    .replace("please", "").trim()
+                val name = cmd.replace("call", "").replace("karo", "").replace("phone", "").replace("to", "").replace("please", "").trim()
                 if (name.isNotBlank()) actionExecutor.callContact(name)
             }
-            cmd.contains("youtube") || cmd.contains("play") ||
-            cmd.contains("gana") || cmd.contains("song") -> {
-                val query = cmd
-                    .replace("play", "").replace("on youtube", "")
-                    .replace("youtube", "").replace("song", "")
-                    .replace("gana", "").replace("chalao", "")
-                    .replace("please", "").trim()
+            cmd.contains("youtube") || cmd.contains("play") || cmd.contains("gana") || cmd.contains("song") -> {
+                val query = cmd.replace("play", "").replace("on youtube", "").replace("youtube", "").replace("song", "").replace("gana", "").replace("chalao", "").replace("please", "").trim()
                 if (query.isNotBlank()) actionExecutor.playOnYoutube(query)
             }
             cmd.startsWith("open ") || cmd.contains("kholo") -> {
-                val app = cmd
-                    .replace("open", "").replace("kholo", "")
-                    .replace("please", "").trim()
+                val app = cmd.replace("open", "").replace("kholo", "").replace("please", "").trim()
                 if (app.isNotBlank()) actionExecutor.openApp(app)
             }
         }
@@ -192,7 +167,7 @@ class AssistantService : Service() {
 
         val notification: Notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle("Jarvis AI")
-            .setContentText("Gemini Live active")
+            .setContentText("Custom Model Active")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
             .build()
@@ -203,9 +178,7 @@ class AssistantService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         isListeningActive = false
-        isSessionActive = false
         handler.removeCallbacksAndMessages(null)
-        try { audioManager.stopAll() } catch (_: Exception) {}
-        try { geminiClient.disconnect() } catch (_: Exception) {}
+        DebugLogger.log("SERVICE", "Service Destroyed")
     }
 }
