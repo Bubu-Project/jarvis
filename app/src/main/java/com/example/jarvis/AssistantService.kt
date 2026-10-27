@@ -19,14 +19,12 @@ class AssistantService : Service() {
 
     private lateinit var apiClient: JarvisApiClient
     private lateinit var actionExecutor: ActionExecutor
-
-    // 🔥 यहाँ अपनी STT और TTS क्लासेस को इनिशियलाइज करना है
-    private lateinit var sttClient: AssemblyAISTT // या जो भी तेरा STT क्लास है
-    private lateinit var ttsClient: FishAudioTTS  // या ElevenLabsTTS
+    private lateinit var sttClient: AssemblyAISTT
+    private lateinit var ttsClient: FishAudioTTS
 
     private val handler = Handler(Looper.getMainLooper())
-    private var isListeningActive = false
     private var isProcessing = false // ताकि एक के बाद एक प्रोसेस हो
+    private var isListeningActive = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -57,14 +55,15 @@ class AssistantService : Service() {
         try {
             actionExecutor = ActionExecutor(this)
             apiClient = JarvisApiClient(this)
-            
-            // 🚨 यहाँ तू अपनी STT और TTS को सेट करेगा
-            // उदाहरण: sttClient = AssemblyAISTT(this)
-            // उदाहरण: ttsClient = FishAudioTTS(this)
+            sttClient = AssemblyAISTT(this)
+            ttsClient = FishAudioTTS(this)
             
             createNotification()
             isListeningActive = true
-            DebugLogger.log("SERVICE", "onCreate started - Gemini Removed")
+            DebugLogger.log("SERVICE", "onCreate started - All clients initialized")
+            
+            setupSTT()
+            setupTTS()
             
             // सबसे पहले सुनना शुरू करो
             startListening()
@@ -74,32 +73,59 @@ class AssistantService : Service() {
         }
     }
 
-    // 🔥 1. सुनने का फंक्शन (STT)
-    private fun startListening() {
-        if (!isListeningActive || isProcessing) return
-        
-        DebugLogger.log("SERVICE", "Listening started...")
-        
-        // 🚨 यहाँ अपना STT शुरू करने वाला कोड डाल
-        /* 
-        sttClient.startListening { recognizedText ->
-            if (recognizedText.isNotBlank()) {
-                onUserSpoke(recognizedText)
+    // 🔥 1. STT (सुनने) का सेटअप
+    private fun setupSTT() {
+        sttClient.setListener(object : AssemblyAISTT.TranscriptionListener {
+            override fun onTranscript(text: String, isFinal: Boolean) {
+                if (isFinal && text.isNotBlank() && !isProcessing) {
+                    DebugLogger.log("STT", "Final Text: $text")
+                    onUserSpoke(text)
+                }
             }
-        }
-        */
-        
-        // फिलहाल टेस्टिंग के लिए डमी टेक्स्ट
-        val dummyText = "नमस्ते जार्विस, तुम कौन हो?"
-        handler.postDelayed({ onUserSpoke(dummyText) }, 2000) 
+
+            override fun onError(message: String) {
+                DebugLogger.log("STT_ERROR", message)
+            }
+        })
     }
 
-    // 🔥 2. जब यूजर बोल ले (टेक्स्ट मिल जाए)
+    // 🔥 2. TTS (बोलने) का सेटअप
+    private fun setupTTS() {
+        ttsClient.setListener(object : FishAudioTTS.TTSListener {
+            override fun onStart() {
+                DebugLogger.log("TTS", "Speaking started...")
+            }
+
+            override fun onDone() {
+                DebugLogger.log("TTS", "Speaking finished.")
+                isProcessing = false
+                // बोलने के बाद आधा सेकंड रुक कर फिर सुनो (ताकि अपनी आवाज़ न सुने)
+                handler.postDelayed({ startListening() }, 500)
+            }
+
+            override fun onError(message: String) {
+                DebugLogger.log("TTS_ERROR", message)
+                isProcessing = false
+                handler.postDelayed({ startListening() }, 1000)
+            }
+        })
+    }
+
+    // 🔥 3. सुनना शुरू करना
+    private fun startListening() {
+        if (!isListeningActive || isProcessing) return
+        DebugLogger.log("SERVICE", "Listening started...")
+        sttClient.startListening()
+    }
+
+    // 🔥 4. जब यूजर बोल ले
     private fun onUserSpoke(text: String) {
         isProcessing = true
-        DebugLogger.log("SERVICE", "User said: $text")
+        DebugLogger.log("SERVICE", "Processing User text...")
         
-        // अगर कोई डिवाइस कमांड है (जैसे फ्लैशलाइट ऑन करना)
+        // माइक को बंद करो ताकि जार्विस बोलते वक्त अपनी आवाज़ न सुने
+        sttClient.stopListening() 
+
         if (isDeviceCommand(text)) {
             executeDeviceCommand(text)
             isProcessing = false
@@ -107,7 +133,6 @@ class AssistantService : Service() {
             return
         }
 
-        // नहीं तो सर्वर को भेजो
         apiClient.sendMessage(
             text = text,
             onResponse = { reply ->
@@ -117,31 +142,14 @@ class AssistantService : Service() {
             onError = { error ->
                 DebugLogger.log("SERVICE", "API Error: $error")
                 isProcessing = false
-                startListening() // एरर आने पर फिर से सुनना शुरू करो
+                startListening() 
             }
         )
     }
 
-    // 🔥 3. जवाब को बोलना (TTS)
+    // 🔥 5. जवाब बोलना
     private fun speakResponse(responseText: String) {
-        DebugLogger.log("TTS", "Speaking: $responseText")
-        
-        // 🚨 यहाँ अपना TTS बोलने वाला कोड डाल
-        /* 
-        ttsClient.speak(responseText) {
-            // जब बोलना खत्म हो जाए, तो फिर से सुनना शुरू करो
-            handler.postDelayed({
-                isProcessing = false
-                startListening()
-            }, 500)
-        }
-        */
-        
-        // फिलहाल टेस्टिंग के लिए 3 सेकंड बाद फिर से सुनने लगेगा
-        handler.postDelayed({
-            isProcessing = false
-            startListening()
-        }, 3000)
+        ttsClient.speak(responseText)
     }
 
     // ================= डिवाइस कमांड्स का लॉजिक =================
@@ -191,7 +199,7 @@ class AssistantService : Service() {
 
         val notification: Notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle("Jarvis AI")
-            .setContentText("Custom Model Active")
+            .setContentText("Voice Assistant Active")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
             .build()
@@ -203,6 +211,8 @@ class AssistantService : Service() {
         super.onDestroy()
         isListeningActive = false
         handler.removeCallbacksAndMessages(null)
+        try { sttClient.stopListening() } catch (_: Exception) {}
+        try { ttsClient.stop() } catch (_: Exception) {}
         DebugLogger.log("SERVICE", "Service Destroyed")
     }
 }
