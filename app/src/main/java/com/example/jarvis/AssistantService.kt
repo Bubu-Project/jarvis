@@ -77,7 +77,8 @@ class AssistantService : Service() {
     private fun setupSTT() {
         sttClient.setListener(object : AssemblyAISTT.TranscriptionListener {
             override fun onTranscript(text: String, isFinal: Boolean) {
-                if (isFinal && text.isNotBlank() && !isProcessing) {
+                // 🔥 फिल्टर: सिर्फ 4 अक्षरों से बड़े टेक्स्ट को सुनेगा (Echo/Noise इग्नोर होगा)
+                if (isFinal && text.isNotBlank() && text.length > 4 && !isProcessing) {
                     DebugLogger.log("STT", "Final Text: $text")
                     onUserSpoke(text)
                 }
@@ -85,6 +86,13 @@ class AssistantService : Service() {
 
             override fun onError(message: String) {
                 DebugLogger.log("STT_ERROR", message)
+                // अगर सॉकेट बंद हो जाए, तो 1.5 सेकंड बाद वापस चालू करने की कोशिश करे
+                handler.postDelayed({
+                    if (isListeningActive && !isProcessing) {
+                        DebugLogger.log("SERVICE", "Reconnecting STT after error...")
+                        sttClient.startListening()
+                    }
+                }, 1500)
             }
         })
     }
@@ -99,14 +107,14 @@ class AssistantService : Service() {
             override fun onDone() {
                 DebugLogger.log("TTS", "Speaking finished.")
                 isProcessing = false
-                // बोलने के बाद आधा सेकंड रुक कर फिर सुनो (ताकि अपनी आवाज़ न सुने)
-                handler.postDelayed({ startListening() }, 500)
+                // 🔥 1.5 सेकंड का इंतज़ार ताकि स्पीकर की आवाज़ पूरी खत्म हो जाए
+                handler.postDelayed({ startListening() }, 1500)
             }
 
             override fun onError(message: String) {
                 DebugLogger.log("TTS_ERROR", message)
                 isProcessing = false
-                handler.postDelayed({ startListening() }, 1000)
+                handler.postDelayed({ startListening() }, 1500)
             }
         })
     }
