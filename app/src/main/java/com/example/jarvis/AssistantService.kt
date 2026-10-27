@@ -17,7 +17,6 @@ import androidx.core.app.NotificationCompat
 
 class AssistantService : Service() {
 
-    // 🔥 Gemini को हटा दिया गया है
     private lateinit var apiClient: JarvisApiClient
     private lateinit var actionExecutor: ActionExecutor
 
@@ -52,7 +51,7 @@ class AssistantService : Service() {
         super.onCreate()
         try {
             actionExecutor = ActionExecutor(this)
-            apiClient = JarvisApiClient() // अपना नया API क्लाइंट इनिशियलाइज किया
+            apiClient = JarvisApiClient(this) // 🔥 यहाँ this जोड़ दिया है
             createNotification()
             isListeningActive = true
             DebugLogger.log("SERVICE", "onCreate started - Gemini Removed")
@@ -65,23 +64,15 @@ class AssistantService : Service() {
 
     private fun startCustomJarvisSystem() {
         DebugLogger.log("SERVICE", "Starting Custom Jarvis System...")
-        
-        // ========================================================
-        // 🚨 यहाँ तू अपना Deepgram या AssemblyAI (STT) शुरू करेगा
-        // जो तेरी आवाज़ सुनकर टेक्स्ट बनाएगा और onUserSpoke() को भेजेगा
-        // ========================================================
-        
-        simulateListening() // अभी के लिए यह डमी फंक्शन चला रहे हैं
+        simulateListening()
     }
 
-    // यह सिर्फ टेस्टिंग के लिए है। बाद में इसे STT से रिप्लेस करना।
     private fun simulateListening() {
         DebugLogger.log("MIC", "Listening...")
         val userText = "नमस्ते जार्विस" 
         onUserSpoke(userText)
     }
 
-    // 🔥 यह फंक्शन तब कॉल होगा जब यूजर कुछ बोलेगा
     private fun onUserSpoke(text: String) {
         DebugLogger.log("SERVICE", "User said: $text")
         
@@ -90,7 +81,6 @@ class AssistantService : Service() {
             return
         }
 
-        // अपने कागल सर्वर (JarvisApiClient) को टेक्स्ट भेजो
         apiClient.sendMessage(
             text = text,
             onResponse = { reply ->
@@ -103,22 +93,8 @@ class AssistantService : Service() {
         )
     }
 
-    // 🔥 यह फंक्शन जार्विस के जवाब को आवाज़ में बदलेगा
     private fun speakResponse(responseText: String) {
         DebugLogger.log("TTS", "Speaking: $responseText")
-        
-        // ========================================================
-        // 🚨 यहाँ तू अपनी FishAudioTTS या ElevenLabsTTS लगाएगा
-        // ========================================================
-        
-        /* 
-        val tts = FishAudioTTS()
-        tts.speak(responseText) { 
-            handler.post { simulateListening() } // बोलने के बाद फिर सुनो
-        }
-        */
-        
-        // अभी के लिए 3 सेकंड बाद फिर से सुनना शुरू कर देंगे
         handler.postDelayed({ simulateListening() }, 3000) 
     }
 
