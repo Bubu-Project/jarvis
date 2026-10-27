@@ -43,8 +43,8 @@ class MainActivity : AppCompatActivity() {
             statusText.text = "Jarvis is running..."
             DebugLogger.log("JARVIS_APP", "Service started")
             
-            // 🔥 यहाँ से हमारा नया API टेस्ट शुरू होता है
-            val apiClient = JarvisApiClient()
+            // 🔥 यहाँ this पास कर दिया है
+            val apiClient = JarvisApiClient(this)
             apiClient.sendMessage(
                 text = "नमस्ते जार्विस, तुम कौन हो?",
                 onResponse = { reply ->
