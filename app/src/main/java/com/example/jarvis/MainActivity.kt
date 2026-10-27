@@ -42,6 +42,18 @@ class MainActivity : AppCompatActivity() {
             }
             statusText.text = "Jarvis is running..."
             DebugLogger.log("JARVIS_APP", "Service started")
+            
+            // 🔥 यहाँ से हमारा नया API टेस्ट शुरू होता है
+            val apiClient = JarvisApiClient()
+            apiClient.sendMessage(
+                text = "नमस्ते जार्विस, तुम कौन हो?",
+                onResponse = { reply ->
+                    DebugLogger.log("TEST_API", "✅ API Reply: $reply")
+                },
+                onError = { error ->
+                    DebugLogger.log("TEST_API", "❌ API Error: $error")
+                }
+            )
         }
 
         findViewById<Button>(R.id.stopButton).setOnClickListener {
