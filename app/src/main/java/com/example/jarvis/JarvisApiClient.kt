@@ -1,5 +1,6 @@
 package com.example.jarvis
 
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import okhttp3.*
@@ -9,35 +10,32 @@ import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-class JarvisApiClient {
-    // 🔥 यहाँ तेरा Ngrok URL डाला है
-    private val API_URL = "https://footwork-upscale-oxidant.ngrok-free.dev/chat"
+class JarvisApiClient(private val context: Context) {
     
+    private val handler = Handler(Looper.getMainLooper())
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
-        
-    private val handler = Handler(Looper.getMainLooper())
 
     fun sendMessage(text: String, onResponse: (String) -> Unit, onError: (String) -> Unit) {
-        val json = JSONObject()
-        json.put("text", text)
+        // तेरा पक्का वाला URL
+        val apiUrl = "https://footwork-upscale-oxidant.ngrok-free.dev/chat" 
 
+        val json = JSONObject().put("text", text)
         val body = json.toString().toRequestBody("application/json".toMediaType())
+        
         val request = Request.Builder()
-            .url(API_URL)
+            .url(apiUrl)
             .post(body)
+            .addHeader("ngrok-skip-browser-warning", "true") // 🔥 यह 404 एरर हटाएगा
             .build()
 
-        DebugLogger.log("JARVIS_API", "Sending: $text")
+        DebugLogger.log("JARVIS_API", "Sending to: $apiUrl")
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                handler.post { 
-                    DebugLogger.log("JARVIS_API", "Error: ${e.message}")
-                    onError(e.message ?: "Unknown Error") 
-                }
+                handler.post { onError(e.message ?: "Unknown Error") }
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -46,12 +44,9 @@ class JarvisApiClient {
                         handler.post { onError("Server Error: ${response.code}") }
                         return
                     }
-                    val responseData = response.body?.string()
                     try {
-                        val jsonObject = JSONObject(responseData ?: "")
-                        val reply = jsonObject.getString("response")
-                        DebugLogger.log("JARVIS_API", "Received: $reply")
-                        handler.post { onResponse(reply) }
+                        val jsonObject = JSONObject(response.body?.string() ?: "")
+                        handler.post { onResponse(jsonObject.getString("response")) }
                     } catch (e: Exception) {
                         handler.post { onError("Parse Error: ${e.message}") }
                     }
