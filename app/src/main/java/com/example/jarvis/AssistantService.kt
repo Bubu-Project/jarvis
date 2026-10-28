@@ -125,7 +125,6 @@ class AssistantService : Service() {
         
         sttClient.stopListening() 
 
-        // कमांड चेक करें
         if (isDeviceCommand(text)) {
             executeDeviceCommand(text)
             isProcessing = false
@@ -133,7 +132,6 @@ class AssistantService : Service() {
             return
         }
 
-        // अगर नॉर्मल सवाल है, तो API पर भेजें
         apiClient.sendMessage(
             text = text,
             onResponse = { reply ->
@@ -154,7 +152,7 @@ class AssistantService : Service() {
 
     // ================= 🔥 हिंदी कमांड्स का लॉजिक =================
     private fun isDeviceCommand(text: String): Boolean {
-        val cmd = text.lowercase().replace(" ", "") // स्पेस हटा दिया ताकि "फ्लेश लाइट" और "फ्लैशलाइट" दोनों मैच हों
+        val cmd = text.lowercase().replace(" ", "") 
         val keywords = listOf(
             "flashlight", "torch", "फ्लैशलाइट", "टॉर्च", "लाइट", "फ्लेशलाइट", "फ्लासलाइट", "टोर्च", 
             "call", "phone", "कॉल", "फोन", "मिलाओ", "डायल",
@@ -192,8 +190,9 @@ class AssistantService : Service() {
                 name = name.trim()
                 
                 if (name.isNotBlank()) {
-                    actionExecutor.callContact(name)
-                    speakResponse("कॉलिंग $name")
+                    val success = actionExecutor.callContact(name)
+                    if (success) speakResponse("कॉलिंग $name")
+                    else speakResponse("माफ करना, मुझे $name का नंबर नहीं मिला।")
                 } else {
                     speakResponse("मुझे नाम समझ नहीं आया, कृपया दोबारा बोलें।")
                 }
@@ -215,8 +214,9 @@ class AssistantService : Service() {
                     .replace("open", "").replace("kholo", "").replace("please", "")
                     .replace("ओपन", "").replace("खोलो", "").replace("करो", "").trim()
                 if (app.isNotBlank()) {
-                    actionExecutor.openApp(app)
-                    speakResponse("$app खोल रही हूँ।")
+                    val success = actionExecutor.openApp(app)
+                    if (success) speakResponse("$app खोल रही हूँ।")
+                    else speakResponse("माफ करना, मुझे $app नहीं मिला।")
                 }
             }
         }
