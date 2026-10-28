@@ -23,16 +23,23 @@ class ActionExecutor(private val context: Context) {
         val normalizedQuery = appName.lowercase().replace(" ", "")
         val match = apps.firstOrNull {
             pm.getApplicationLabel(it).toString().lowercase().replace(" ", "").contains(normalizedQuery)
-        } ?: return false
+        } ?: run {
+            DebugLogger.log("ACTION_ERR", "App not found: $appName")
+            return false
+        }
 
         val launchIntent = pm.getLaunchIntentForPackage(match.packageName) ?: return false
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(launchIntent)
+        DebugLogger.log("ACTION", "Opened app: $appName")
         return true
     }
 
     fun callContact(name: String): Boolean {
-        val phoneNumber = lookupContactNumber(name) ?: return false
+        val phoneNumber = lookupContactNumber(name) ?: run {
+            DebugLogger.log("ACTION_ERR", "Contact not found: $name")
+            return false
+        }
 
         val hasCallPermission = ContextCompat.checkSelfPermission(
             context, Manifest.permission.CALL_PHONE
@@ -47,11 +54,15 @@ class ActionExecutor(private val context: Context) {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(intent)
+        DebugLogger.log("ACTION", "Calling $name at $phoneNumber")
         return true
     }
 
     fun sendSms(name: String, message: String): Boolean {
-        val phoneNumber = lookupContactNumber(name) ?: return false
+        val phoneNumber = lookupContactNumber(name) ?: run {
+            DebugLogger.log("ACTION_ERR", "Contact not found: $name")
+            return false
+        }
         try {
             val smsManager: SmsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 context.getSystemService(SmsManager::class.java)
@@ -60,9 +71,10 @@ class ActionExecutor(private val context: Context) {
                 SmsManager.getDefault()
             }
             smsManager.sendTextMessage(phoneNumber, null, message, null, null)
+            DebugLogger.log("ACTION", "SMS sent to $name")
             return true
         } catch (e: Exception) {
-            e.printStackTrace()
+            DebugLogger.log("ACTION_ERR", "SMS failed: ${e.message}")
             return false
         }
     }
@@ -76,6 +88,7 @@ class ActionExecutor(private val context: Context) {
 
         try {
             context.startActivity(youtubeIntent)
+            DebugLogger.log("ACTION", "Playing on YouTube: $query")
         } catch (e: Exception) {
             try {
                 val urlIntent = Intent(Intent.ACTION_VIEW).apply {
@@ -84,12 +97,14 @@ class ActionExecutor(private val context: Context) {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 context.startActivity(urlIntent)
+                DebugLogger.log("ACTION", "Playing on YouTube (URL): $query")
             } catch (e2: Exception) {
                 val browserIntent = Intent(Intent.ACTION_VIEW).apply {
                     data = Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(query)}")
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 context.startActivity(browserIntent)
+                DebugLogger.log("ACTION", "Playing on YouTube (Browser): $query")
             }
         }
     }
@@ -99,8 +114,9 @@ class ActionExecutor(private val context: Context) {
             val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
             val cameraId = cameraManager.cameraIdList.firstOrNull() ?: return
             cameraManager.setTorchMode(cameraId, on)
+            DebugLogger.log("ACTION", "Flashlight: $on")
         } catch (e: Exception) {
-            e.printStackTrace()
+            DebugLogger.log("ACTION_ERR", "Flashlight failed: ${e.message}")
         }
     }
 
@@ -146,101 +162,95 @@ class ActionExecutor(private val context: Context) {
         }
         return null
     }
-       // ============ CALL HANDLING ============
 
-fun getContactName(number: String): String? {
-    val hasReadPermission = ContextCompat.checkSelfPermission(
-        context, Manifest.permission.READ_CONTACTS
-    ) == PackageManager.PERMISSION_GRANTED
+    // ============ CALL HANDLING ============
+    fun getContactName(number: String): String? {
+        val hasReadPermission = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.READ_CONTACTS
+        ) == PackageManager.PERMISSION_GRANTED
 
-    if (!hasReadPermission) return null
+        if (!hasReadPermission) return null
 
-    try {
-        val uri = Uri.withAppendedPath(
-            ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
-            Uri.encode(number)
-        )
+        try {
+            val uri = Uri.withAppendedPath(
+                ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+                Uri.encode(number)
+            )
 
-        val cursor = context.contentResolver.query(
-            uri,
-            arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
-            null, null, null
-        )
+            val cursor = context.contentResolver.query(
+                uri,
+                arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
+                null, null, null
+            )
 
-        cursor?.use {
-            if (it.moveToFirst()) {
-                return it.getString(0)
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    return it.getString(0)
+                }
             }
+        } catch (e: Exception) {
+            DebugLogger.log("ACTION_ERR", "Contact lookup error: ${e.message}")
         }
-    } catch (e: Exception) {
-        android.util.Log.e("JARVIS_CALL", "Contact lookup error: ${e.message}")
+        return null
     }
-    return null
-}
 
-fun isSpamNumber(number: String): Boolean {
-    try {
-        val cleanNumber = number.replace(" ", "").replace("-", "").replace("+", "")
-
-        // India spam prefixes
-        val spamPrefixes = listOf("140", "1800", "1860", "1900")
-        for (prefix in spamPrefixes) {
-            if (cleanNumber.startsWith(prefix)) return true
-        }
-
-        // Short numbers (5-6 digits)
-        if (cleanNumber.length in 5..6 && cleanNumber.toLongOrNull() != null) {
-            return true
-        }
-
-        // Repeated digits
-        if (cleanNumber.length >= 10) {
-            val uniqueDigits = cleanNumber.toSet()
-            if (uniqueDigits.size <= 2) return true
-        }
-    } catch (e: Exception) {
-        android.util.Log.e("JARVIS_CALL", "Spam check error: ${e.message}")
-    }
-    return false
-}
-
-fun answerCall(): Boolean {
-    try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val telecomManager = context.getSystemService(Context.TELECOM_SERVICE)
-                    as android.telecom.TelecomManager
-
-            if (ContextCompat.checkSelfPermission(
-                    context, Manifest.permission.ANSWER_PHONE_CALLS
-                ) == PackageManager.PERMISSION_GRANTED
-            ) {
-                telecomManager.acceptRingingCall()
+    fun isSpamNumber(number: String): Boolean {
+        try {
+            val cleanNumber = number.replace(" ", "").replace("-", "").replace("+", "")
+            val spamPrefixes = listOf("140", "1800", "1860", "1900")
+            for (prefix in spamPrefixes) {
+                if (cleanNumber.startsWith(prefix)) return true
+            }
+            if (cleanNumber.length in 5..6 && cleanNumber.toLongOrNull() != null) {
                 return true
             }
-        }
-    } catch (e: Exception) {
-        android.util.Log.e("JARVIS_CALL", "Answer failed: ${e.message}")
-    }
-    return false
-}
-
-fun rejectCall(): Boolean {
-    try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            val telecomManager = context.getSystemService(Context.TELECOM_SERVICE)
-                    as android.telecom.TelecomManager
-
-            if (ContextCompat.checkSelfPermission(
-                    context, Manifest.permission.ANSWER_PHONE_CALLS
-                ) == PackageManager.PERMISSION_GRANTED
-            ) {
-                telecomManager.endCall()
-                return true
+            if (cleanNumber.length >= 10) {
+                val uniqueDigits = cleanNumber.toSet()
+                if (uniqueDigits.size <= 2) return true
             }
+        } catch (e: Exception) {
+            DebugLogger.log("ACTION_ERR", "Spam check error: ${e.message}")
         }
-    } catch (e: Exception) {
-        android.util.Log.e("JARVIS_CALL", "Reject failed: ${e.message}")
+        return false
     }
-    return false
-}
+
+    fun answerCall(): Boolean {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val telecomManager = context.getSystemService(Context.TELECOM_SERVICE)
+                        as android.telecom.TelecomManager
+
+                if (ContextCompat.checkSelfPermission(
+                        context, Manifest.permission.ANSWER_PHONE_CALLS
+                    ) == PackageManager.PERMISSION_GRANTED
+                ) {
+                    telecomManager.acceptRingingCall()
+                    return true
+                }
+            }
+        } catch (e: Exception) {
+            DebugLogger.log("ACTION_ERR", "Answer failed: ${e.message}")
+        }
+        return false
+    }
+
+    fun rejectCall(): Boolean {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val telecomManager = context.getSystemService(Context.TELECOM_SERVICE)
+                        as android.telecom.TelecomManager
+
+                if (ContextCompat.checkSelfPermission(
+                        context, Manifest.permission.ANSWER_PHONE_CALLS
+                    ) == PackageManager.PERMISSION_GRANTED
+                ) {
+                    telecomManager.endCall()
+                    return true
+                }
+            }
+        } catch (e: Exception) {
+            DebugLogger.log("ACTION_ERR", "Reject failed: ${e.message}")
+        }
+        return false
+    }
 }
