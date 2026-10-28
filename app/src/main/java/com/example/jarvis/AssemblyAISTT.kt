@@ -83,11 +83,11 @@ class AssemblyAISTT(private val context: Context) {
                 .readTimeout(0, TimeUnit.MILLISECONDS)
                 .build()
 
-            // 🔥 यहाँ बदलाव किया गया है: english की जगह multilingual
+            // 🔥 यहाँ हिंदी (Hindi) के लिए language_code=hi जोड़ दिया है
             val url = "wss://streaming.assemblyai.com/v3/ws" +
                     "?sample_rate=16000" +
                     "&encoding=pcm_s16le" +
-                    "&speech_model=universal-streaming-multilingual" + 
+                    "&language_code=hi" + 
                     "&token=$token"
 
             val request = Request.Builder().url(url).build()
