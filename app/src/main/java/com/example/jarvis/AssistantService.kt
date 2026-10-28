@@ -23,7 +23,7 @@ class AssistantService : Service() {
     private lateinit var ttsClient: FishAudioTTS
 
     private val handler = Handler(Looper.getMainLooper())
-    private var isProcessing = false // ताकि एक के बाद एक प्रोसेस हो
+    private var isProcessing = false
     private var isListeningActive = false
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -65,7 +65,6 @@ class AssistantService : Service() {
             setupSTT()
             setupTTS()
             
-            // सबसे पहले सुनना शुरू करो
             startListening()
             
         } catch (e: Exception) {
@@ -73,12 +72,10 @@ class AssistantService : Service() {
         }
     }
 
-    // 🔥 1. STT (सुनने) का सेटअप
     private fun setupSTT() {
         sttClient.setListener(object : AssemblyAISTT.TranscriptionListener {
             override fun onTranscript(text: String, isFinal: Boolean) {
-                // 🔥 फिल्टर: सिर्फ 4 अक्षरों से बड़े टेक्स्ट को सुनेगा (Echo/Noise इग्नोर होगा)
-                if (isFinal && text.isNotBlank() && text.length > 4 && !isProcessing) {
+                if (isFinal && text.isNotBlank() && text.length > 3 && !isProcessing) {
                     DebugLogger.log("STT", "Final Text: $text")
                     onUserSpoke(text)
                 }
@@ -86,7 +83,6 @@ class AssistantService : Service() {
 
             override fun onError(message: String) {
                 DebugLogger.log("STT_ERROR", message)
-                // अगर सॉकेट बंद हो जाए, तो 1.5 सेकंड बाद वापस चालू करने की कोशिश करे
                 handler.postDelayed({
                     if (isListeningActive && !isProcessing) {
                         DebugLogger.log("SERVICE", "Reconnecting STT after error...")
@@ -97,7 +93,6 @@ class AssistantService : Service() {
         })
     }
 
-    // 🔥 2. TTS (बोलने) का सेटअप
     private fun setupTTS() {
         ttsClient.setListener(object : FishAudioTTS.TTSListener {
             override fun onStart() {
@@ -107,7 +102,6 @@ class AssistantService : Service() {
             override fun onDone() {
                 DebugLogger.log("TTS", "Speaking finished.")
                 isProcessing = false
-                // 🔥 1.5 सेकंड का इंतज़ार ताकि स्पीकर की आवाज़ पूरी खत्म हो जाए
                 handler.postDelayed({ startListening() }, 1500)
             }
 
@@ -119,28 +113,27 @@ class AssistantService : Service() {
         })
     }
 
-    // 🔥 3. सुनना शुरू करना
     private fun startListening() {
         if (!isListeningActive || isProcessing) return
         DebugLogger.log("SERVICE", "Listening started...")
         sttClient.startListening()
     }
 
-    // 🔥 4. जब यूजर बोल ले
     private fun onUserSpoke(text: String) {
         isProcessing = true
         DebugLogger.log("SERVICE", "Processing User text...")
         
-        // माइक को बंद करो ताकि जार्विस बोलते वक्त अपनी आवाज़ न सुने
         sttClient.stopListening() 
 
+        // 🔥 यहाँ चेक होगा कि कमांड है या नहीं
         if (isDeviceCommand(text)) {
             executeDeviceCommand(text)
             isProcessing = false
-            startListening()
+            handler.postDelayed({ startListening() }, 1000) // कमांड के बाद फिर सुनो
             return
         }
 
+        // अगर नॉर्मल सवाल है, तो API पर भेजो
         apiClient.sendMessage(
             text = text,
             onResponse = { reply ->
@@ -155,15 +148,20 @@ class AssistantService : Service() {
         )
     }
 
-    // 🔥 5. जवाब बोलना
     private fun speakResponse(responseText: String) {
         ttsClient.speak(responseText)
     }
 
-    // ================= डिवाइस कमांड्स का लॉजिक =================
+    // ================= 🔥 हिंदी कमांड्स का लॉजिक =================
     private fun isDeviceCommand(text: String): Boolean {
         val cmd = text.lowercase()
-        val keywords = listOf("flashlight", "torch", "call", "phone", "dial", "youtube", "play", "gana", "song", "open", "kholo")
+        // यहाँ हिंदी और इंग्लिश दोनों के कीवर्ड्स जोड़े हैं
+        val keywords = listOf(
+            "flashlight", "torch", "फ्लैशलाइट", "टॉर्च", "लाइट", 
+            "call", "phone", "कॉल", "फोन", 
+            "youtube", "play", "gana", "song", "गाना", "चलाओ", "यूट्यूब", 
+            "open", "kholo", "खोलो", "ओपन"
+        )
         return keywords.any { cmd.contains(it) }
     }
 
@@ -172,29 +170,50 @@ class AssistantService : Service() {
         DebugLogger.log("CMD", "Executing: ${cmd.take(60)}")
 
         when {
-            cmd.contains("flashlight") || cmd.contains("torch") -> {
-                if (cmd.contains("off") || cmd.contains("band") || cmd.contains("bujha")) {
+            // 🔦 फ्लैशलाइट (हिंदी + इंग्लिश)
+            cmd.contains("flashlight") || cmd.contains("torch") || cmd.contains("फ्लैशलाइट") || cmd.contains("टॉर्च") -> {
+                if (cmd.contains("off") || cmd.contains("band") || cmd.contains("बंद") || cmd.contains("बुझा")) {
                     actionExecutor.toggleFlashlight(false)
+                    speakResponse("फ्लैशलाइट बंद कर दी गई है।")
                 } else {
                     actionExecutor.toggleFlashlight(true)
+                    speakResponse("फ्लैशलाइट चालू कर दी गई है।")
                 }
             }
-            cmd.contains("call") || cmd.contains("phone") -> {
-                val name = cmd.replace("call", "").replace("karo", "").replace("phone", "").replace("to", "").replace("please", "").trim()
-                if (name.isNotBlank()) actionExecutor.callContact(name)
+            // 📞 कॉल
+            cmd.contains("call") || cmd.contains("phone") || cmd.contains("कॉल") || cmd.contains("फोन") -> {
+                val name = cmd
+                    .replace("call", "").replace("karo", "").replace("phone", "").replace("to", "").replace("please", "")
+                    .replace("कॉल", "").replace("फोन", "").replace("करो", "").replace("को", "").replace("कर", "").trim()
+                if (name.isNotBlank()) {
+                    actionExecutor.callContact(name)
+                    speakResponse("कॉलिंग $name")
+                }
             }
-            cmd.contains("youtube") || cmd.contains("play") || cmd.contains("gana") || cmd.contains("song") -> {
-                val query = cmd.replace("play", "").replace("on youtube", "").replace("youtube", "").replace("song", "").replace("gana", "").replace("chalao", "").replace("please", "").trim()
-                if (query.isNotBlank()) actionExecutor.playOnYoutube(query)
+            // 📺 यूट्यूब (गाना)
+            cmd.contains("youtube") || cmd.contains("play") || cmd.contains("gana") || cmd.contains("song") || 
+            cmd.contains("गाना") || cmd.contains("चलाओ") || cmd.contains("यूट्यूब") -> {
+                val query = cmd
+                    .replace("play", "").replace("on youtube", "").replace("youtube", "").replace("song", "").replace("gana", "").replace("chalao", "").replace("please", "")
+                    .replace("यूट्यूब", "").replace("पर", "").replace("पे", "").replace("गाना", "").replace("चलाओ", "").replace("चला", "").trim()
+                if (query.isNotBlank()) {
+                    actionExecutor.playOnYoutube(query)
+                    speakResponse("यूट्यूब पर $query चला रही हूँ।")
+                }
             }
-            cmd.startsWith("open ") || cmd.contains("kholo") -> {
-                val app = cmd.replace("open", "").replace("kholo", "").replace("please", "").trim()
-                if (app.isNotBlank()) actionExecutor.openApp(app)
+            // 📱 ऐप खोलना
+            cmd.startsWith("open ") || cmd.contains("kholo") || cmd.contains("खोलो") || cmd.contains("ओपन") -> {
+                val app = cmd
+                    .replace("open", "").replace("kholo", "").replace("please", "")
+                    .replace("ओपन", "").replace("खोलो", "").replace("करो", "").trim()
+                if (app.isNotBlank()) {
+                    actionExecutor.openApp(app)
+                    speakResponse("$app खोल रही हूँ।")
+                }
             }
         }
     }
 
-    // ================= नोटिफिकेशन =================
     private fun createNotification() {
         val channelId = "jarvis_channel"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
