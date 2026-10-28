@@ -1,190 +1,84 @@
 package com.example.jarvis
 
-import android.annotation.SuppressLint
 import android.content.Context
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
-import android.os.Handler
-import android.os.Looper
-import android.util.Log
-import android.widget.Toast
-import com.google.gson.JsonParser
-import okhttp3.*
-import okio.ByteString.Companion.toByteString
-import java.io.IOException
-import java.util.concurrent.TimeUnit
+import android.content.Intent
+import android.hardware.camera2.CameraManager
+import android.net.Uri
+import android.provider.ContactsContract
 
-class AssemblyAISTT(private val context: Context) {
+class ActionExecutor(private val context: Context) {
 
-    private val API_KEY = "3f61e0470f894c2e9e3565f4187cfab1"
-    private var webSocket: WebSocket? = null
-    private var audioRecord: AudioRecord? = null
-    private var isRecording = false
-    private var recordingThread: Thread? = null
-    private val handler = Handler(Looper.getMainLooper())
+    private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
 
-    interface TranscriptionListener {
-        fun onTranscript(text: String, isFinal: Boolean)
-        fun onError(message: String)
-    }
-
-    private var listener: TranscriptionListener? = null
-    fun setListener(l: TranscriptionListener) { listener = l }
-
-    fun startListening() {
-        if (isRecording) return
-        fetchTokenAndConnect()
-    }
-
-    fun pauseStreaming() {
-        // No-op
-    }
-
-    fun resumeStreaming() {
-        // No-op
-    }
-
-    private fun fetchTokenAndConnect() {
-        val client = OkHttpClient()
-        val url = "https://streaming.assemblyai.com/v3/token?expires_in_seconds=300"
-
-        val request = Request.Builder()
-            .url(url)
-            .addHeader("Authorization", API_KEY)
-            .get()
-            .build()
-
-        client.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                handler.post {
-                    Toast.makeText(context, "Token Error: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            }
-
-            override fun onResponse(call: Call, response: Response) {
-                if (response.isSuccessful) {
-                    try {
-                        val responseBody = response.body?.string() ?: ""
-                        val token = JsonParser.parseString(responseBody)
-                            .asJsonObject.get("token").asString
-                        connectWebSocket(token)
-                    } catch (e: Exception) {
-                        Log.e("JARVIS_STT", "Token parse: ${e.message}")
-                    }
-                }
-            }
-        })
-    }
-
-    private fun connectWebSocket(token: String) {
+    // 🔦 1. फ्लैशलाइट (Debugger के साथ)
+    fun toggleFlashlight(on: Boolean) {
         try {
-            val client = OkHttpClient.Builder()
-                .readTimeout(0, TimeUnit.MILLISECONDS)
-                .build()
-
-            // 🔥 यहाँ हिंदी (Hindi) के लिए language_code=hi जोड़ दिया है
-            val url = "wss://streaming.assemblyai.com/v3/ws" +
-                    "?sample_rate=16000" +
-                    "&encoding=pcm_s16le" +
-                    "&language_code=hi" + 
-                    "&token=$token"
-
-            val request = Request.Builder().url(url).build()
-
-            webSocket = client.newWebSocket(request, object : WebSocketListener() {
-                override fun onOpen(webSocket: WebSocket, response: Response) {
-                    Log.d("JARVIS_STT", "Connected")
-                    startAudioStreaming()
-                }
-
-                override fun onMessage(webSocket: WebSocket, text: String) {
-                    try {
-                        val json = JsonParser.parseString(text).asJsonObject
-                        val type = json.get("type")?.asString ?: ""
-                        val transcript = json.get("transcript")?.asString ?: ""
-
-                        if (type == "Turn" && transcript.isNotBlank()) {
-                            val isFinal = json.get("end_of_turn")?.asBoolean ?: false
-                            handler.post { listener?.onTranscript(transcript, isFinal) }
-                        }
-                    } catch (e: Exception) {
-                        Log.e("JARVIS_STT", "Parse: ${e.message}")
-                    }
-                }
-
-                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    handler.post { listener?.onError(t.message ?: "Connection failed") }
-                }
-            })
-            isRecording = true
+            val cameraId = cameraManager.cameraIdList[0]
+            cameraManager.setTorchMode(cameraId, on)
+            DebugLogger.log("ACTION", "Flashlight turned: $on")
         } catch (e: Exception) {
-            Log.e("JARVIS_STT", "Connect failed: ${e.message}")
+            DebugLogger.log("ACTION_ERR", "Flashlight Error: ${e.message}")
         }
     }
 
-    @SuppressLint("MissingPermission")
-    private fun startAudioStreaming() {
-        val sampleRate = 16000
-        val bufferSize = AudioRecord.getMinBufferSize(
-            sampleRate,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT
-        )
-
+    // 📞 2. कॉल करना (Debugger के साथ)
+    fun callContact(name: String) {
         try {
-            // ✅ VOICE_COMMUNICATION = AEC built-in (echo cancel)
-            audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                sampleRate,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                bufferSize
-            )
+            val uri = Uri.withAppendedPath(ContactsContract.CommonDataKinds.Phone.CONTENT_FILTER_URI, Uri.encode(name))
+            val cursor = context.contentResolver.query(uri, arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER), null, null, null)
+            
+            if (cursor != null && cursor.moveToFirst()) {
+                val number = cursor.getString(0)
+                cursor.close()
+                val intent = Intent(Intent.ACTION_CALL)
+                intent.data = Uri.parse("tel:$number")
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+                DebugLogger.log("ACTION", "Calling $name at $number")
+            } else {
+                DebugLogger.log("ACTION_ERR", "Contact not found: $name")
+                val intent = Intent(Intent.ACTION_DIAL)
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+            }
+        } catch (e: Exception) {
+            DebugLogger.log("ACTION_ERR", "Call Error: ${e.message}")
+        }
+    }
 
-            if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                Log.e("JARVIS_STT", "Mic init failed")
+    // 📺 3. यूट्यूब (जो पहले से चल रहा है)
+    fun playOnYoutube(query: String) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$query"))
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+            DebugLogger.log("ACTION", "Playing on YouTube: $query")
+        } catch (e: Exception) {
+            DebugLogger.log("ACTION_ERR", "YouTube Error: ${e.message}")
+        }
+    }
+
+    // 📱 4. ऐप खोलना
+    fun openApp(appName: String) {
+        val packageName = when (appName.lowercase().trim()) {
+            "whatsapp", "व्हाट्सएप" -> "com.whatsapp"
+            "instagram", "इंस्टाग्राम" -> "com.instagram.android"
+            "facebook", "फेसबुक" -> "com.facebook.katana"
+            "telegram", "टेलीग्राम" -> "org.telegram.messenger"
+            "camera", "कैमरा" -> "com.android.camera"
+            "settings", "सेटिंग्स" -> "com.android.settings"
+            else -> ""
+        }
+
+        if (packageName.isNotEmpty()) {
+            val intent = context.packageManager.getLaunchIntentForPackage(packageName)
+            if (intent != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+                DebugLogger.log("ACTION", "Opened app: $appName")
                 return
             }
-
-            audioRecord?.startRecording()
-            Log.d("JARVIS_STT", "Audio streaming started (AEC on)")
-
-            recordingThread = Thread {
-                val chunkSize = 1600
-                val buffer = ByteArray(chunkSize)
-                while (isRecording) {
-                    val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
-                    if (read > 0) {
-                        // 2x boost
-                        val amplified = ByteArray(read)
-                        for (i in 0 until read step 2) {
-                            if (i + 1 < read) {
-                                var sample = ((buffer[i + 1].toInt() and 0xFF) shl 8) or
-                                        (buffer[i].toInt() and 0xFF)
-                                if (sample > 32767) sample -= 65536
-                                sample = (sample * 2).coerceIn(-32768, 32767)
-                                amplified[i] = (sample and 0xFF).toByte()
-                                amplified[i + 1] = ((sample shr 8) and 0xFF).toByte()
-                            }
-                        }
-                        webSocket?.send(amplified.toByteString())
-                    }
-                }
-            }
-            recordingThread?.start()
-
-        } catch (e: Exception) {
-            Log.e("JARVIS_STT", "Audio error: ${e.message}")
         }
+        DebugLogger.log("ACTION_ERR", "App not found: $appName")
     }
-
-    fun stopListening() {
-        isRecording = false
-        try { recordingThread?.join(1000); recordingThread = null } catch (_: Exception) {}
-        try { audioRecord?.stop(); audioRecord?.release(); audioRecord = null } catch (_: Exception) {}
-        try { webSocket?.close(1000, "Closing"); webSocket = null } catch (_: Exception) {}
-    }
-
-    fun isListening(): Boolean = isRecording
 }
