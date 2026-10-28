@@ -125,15 +125,15 @@ class AssistantService : Service() {
         
         sttClient.stopListening() 
 
-        // 🔥 यहाँ चेक होगा कि कमांड है या नहीं
+        // कमांड चेक करें
         if (isDeviceCommand(text)) {
             executeDeviceCommand(text)
             isProcessing = false
-            handler.postDelayed({ startListening() }, 1000) // कमांड के बाद फिर सुनो
+            handler.postDelayed({ startListening() }, 1000)
             return
         }
 
-        // अगर नॉर्मल सवाल है, तो API पर भेजो
+        // अगर नॉर्मल सवाल है, तो API पर भेजें
         apiClient.sendMessage(
             text = text,
             onResponse = { reply ->
@@ -154,12 +154,11 @@ class AssistantService : Service() {
 
     // ================= 🔥 हिंदी कमांड्स का लॉजिक =================
     private fun isDeviceCommand(text: String): Boolean {
-        val cmd = text.lowercase()
-        // यहाँ हिंदी और इंग्लिश दोनों के कीवर्ड्स जोड़े हैं
+        val cmd = text.lowercase().replace(" ", "") // स्पेस हटा दिया ताकि "फ्लेश लाइट" और "फ्लैशलाइट" दोनों मैच हों
         val keywords = listOf(
-            "flashlight", "torch", "फ्लैशलाइट", "टॉर्च", "लाइट", 
-            "call", "phone", "कॉल", "फोन", 
-            "youtube", "play", "gana", "song", "गाना", "चलाओ", "यूट्यूब", 
+            "flashlight", "torch", "फ्लैशलाइट", "टॉर्च", "लाइट", "फ्लेशलाइट", "फ्लासलाइट", "टोर्च", 
+            "call", "phone", "कॉल", "फोन", "मिलाओ", "डायल",
+            "youtube", "play", "gana", "song", "गाना", "चलाओ", "यूट्यूब", "बजाओ", 
             "open", "kholo", "खोलो", "ओपन"
         )
         return keywords.any { cmd.contains(it) }
@@ -167,11 +166,14 @@ class AssistantService : Service() {
 
     private fun executeDeviceCommand(text: String) {
         val cmd = text.lowercase().trim()
+        val cmdNoSpace = cmd.replace(" ", "")
         DebugLogger.log("CMD", "Executing: ${cmd.take(60)}")
 
         when {
-            // 🔦 फ्लैशलाइट (हिंदी + इंग्लिश)
-            cmd.contains("flashlight") || cmd.contains("torch") || cmd.contains("फ्लैशलाइट") || cmd.contains("टॉर्च") -> {
+            // 🔦 फ्लैशलाइट
+            cmdNoSpace.contains("flashlight") || cmdNoSpace.contains("torch") || 
+            cmdNoSpace.contains("फ्लैशलाइट") || cmdNoSpace.contains("फ्लेशलाइट") || 
+            cmdNoSpace.contains("फ्लासलाइट") || cmdNoSpace.contains("टॉर्च") || cmdNoSpace.contains("लाइट") -> {
                 if (cmd.contains("off") || cmd.contains("band") || cmd.contains("बंद") || cmd.contains("बुझा")) {
                     actionExecutor.toggleFlashlight(false)
                     speakResponse("फ्लैशलाइट बंद कर दी गई है।")
@@ -181,18 +183,24 @@ class AssistantService : Service() {
                 }
             }
             // 📞 कॉल
-            cmd.contains("call") || cmd.contains("phone") || cmd.contains("कॉल") || cmd.contains("फोन") -> {
-                val name = cmd
-                    .replace("call", "").replace("karo", "").replace("phone", "").replace("to", "").replace("please", "")
-                    .replace("कॉल", "").replace("फोन", "").replace("करो", "").replace("को", "").replace("कर", "").trim()
+            cmdNoSpace.contains("call") || cmdNoSpace.contains("phone") || cmdNoSpace.contains("कॉल") || cmdNoSpace.contains("फोन") -> {
+                var name = cmd
+                val wordsToRemove = listOf("call", "karo", "phone", "to", "please", "कॉल", "फोन", "करो", "को", "कर", "मिलाओ", "डायल")
+                for (word in wordsToRemove) {
+                    name = name.replace(word, "")
+                }
+                name = name.trim()
+                
                 if (name.isNotBlank()) {
                     actionExecutor.callContact(name)
                     speakResponse("कॉलिंग $name")
+                } else {
+                    speakResponse("मुझे नाम समझ नहीं आया, कृपया दोबारा बोलें।")
                 }
             }
-            // 📺 यूट्यूब (गाना)
-            cmd.contains("youtube") || cmd.contains("play") || cmd.contains("gana") || cmd.contains("song") || 
-            cmd.contains("गाना") || cmd.contains("चलाओ") || cmd.contains("यूट्यूब") -> {
+            // 📺 यूट्यूब
+            cmdNoSpace.contains("youtube") || cmdNoSpace.contains("play") || cmdNoSpace.contains("gana") || cmdNoSpace.contains("song") || 
+            cmdNoSpace.contains("गाना") || cmdNoSpace.contains("चलाओ") || cmdNoSpace.contains("यूट्यूब") -> {
                 val query = cmd
                     .replace("play", "").replace("on youtube", "").replace("youtube", "").replace("song", "").replace("gana", "").replace("chalao", "").replace("please", "")
                     .replace("यूट्यूब", "").replace("पर", "").replace("पे", "").replace("गाना", "").replace("चलाओ", "").replace("चला", "").trim()
