@@ -6,14 +6,10 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraManager
 import android.net.Uri
-import android.os.BatteryManager
 import android.os.Build
 import android.provider.ContactsContract
 import android.telephony.SmsManager
 import androidx.core.content.ContextCompat
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class ActionExecutor(private val context: Context) {
 
@@ -39,6 +35,24 @@ class ActionExecutor(private val context: Context) {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
         return true
+    }
+
+    // 🔥 यह वो फंक्शन है जो मिसिंग था
+    fun sendSms(name: String, message: String): Boolean {
+        val phoneNumber = lookupContactNumber(name) ?: return false
+        try {
+            val smsManager: SmsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                context.getSystemService(SmsManager::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                SmsManager.getDefault()
+            }
+            smsManager.sendTextMessage(phoneNumber, null, message, null, null)
+            return true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return false
+        }
     }
 
     fun playOnYoutube(query: String) {
