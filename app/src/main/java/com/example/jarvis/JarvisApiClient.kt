@@ -20,7 +20,7 @@ class JarvisApiClient(private val context: Context) {
 
     fun sendMessage(text: String, onResponse: (String) -> Unit, onError: (String) -> Unit) {
         // तेरा पक्का वाला URL
-        val apiUrl = "https://footwork-upscale-oxidant.ngrok-free.dev/chat" 
+        val apiUrl = "https://footwork-upscale-oxidant.ngrok-free.dev"
 
         val json = JSONObject().put("text", text)
         val body = json.toString().toRequestBody("application/json".toMediaType())
