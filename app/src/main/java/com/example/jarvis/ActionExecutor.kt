@@ -23,60 +23,22 @@ class ActionExecutor(private val context: Context) {
         val normalizedQuery = appName.lowercase().replace(" ", "")
         val match = apps.firstOrNull {
             pm.getApplicationLabel(it).toString().lowercase().replace(" ", "").contains(normalizedQuery)
-        } ?: run {
-            DebugLogger.log("ACTION_ERR", "App not found: $appName")
-            return false
-        }
+        } ?: return false
 
         val launchIntent = pm.getLaunchIntentForPackage(match.packageName) ?: return false
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(launchIntent)
-        DebugLogger.log("ACTION", "Opened app: $appName")
         return true
     }
 
     fun callContact(name: String): Boolean {
-        val phoneNumber = lookupContactNumber(name) ?: run {
-            DebugLogger.log("ACTION_ERR", "Contact not found: $name")
-            return false
-        }
-
-        val hasCallPermission = ContextCompat.checkSelfPermission(
-            context, Manifest.permission.CALL_PHONE
-        ) == PackageManager.PERMISSION_GRANTED
-
-        val intent = if (hasCallPermission) {
-            Intent(Intent.ACTION_CALL)
-        } else {
-            Intent(Intent.ACTION_DIAL)
-        }.apply {
-            data = Uri.parse("tel:$phoneNumber")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
+        val phoneNumber = lookupContactNumber(name) ?: return false
+        val hasCallPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
+        val intent = if (hasCallPermission) Intent(Intent.ACTION_CALL) else Intent(Intent.ACTION_DIAL)
+        intent.data = Uri.parse("tel:$phoneNumber")
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
-        DebugLogger.log("ACTION", "Calling $name at $phoneNumber")
         return true
-    }
-
-    fun sendSms(name: String, message: String): Boolean {
-        val phoneNumber = lookupContactNumber(name) ?: run {
-            DebugLogger.log("ACTION_ERR", "Contact not found: $name")
-            return false
-        }
-        try {
-            val smsManager: SmsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                context.getSystemService(SmsManager::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                SmsManager.getDefault()
-            }
-            smsManager.sendTextMessage(phoneNumber, null, message, null, null)
-            DebugLogger.log("ACTION", "SMS sent to $name")
-            return true
-        } catch (e: Exception) {
-            DebugLogger.log("ACTION_ERR", "SMS failed: ${e.message}")
-            return false
-        }
     }
 
     fun playOnYoutube(query: String) {
@@ -85,27 +47,14 @@ class ActionExecutor(private val context: Context) {
             putExtra("query", query)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-
         try {
             context.startActivity(youtubeIntent)
-            DebugLogger.log("ACTION", "Playing on YouTube: $query")
         } catch (e: Exception) {
-            try {
-                val urlIntent = Intent(Intent.ACTION_VIEW).apply {
-                    data = Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(query)}")
-                    setPackage("com.google.android.youtube")
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                context.startActivity(urlIntent)
-                DebugLogger.log("ACTION", "Playing on YouTube (URL): $query")
-            } catch (e2: Exception) {
-                val browserIntent = Intent(Intent.ACTION_VIEW).apply {
-                    data = Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(query)}")
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                context.startActivity(browserIntent)
-                DebugLogger.log("ACTION", "Playing on YouTube (Browser): $query")
+            val browserIntent = Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(query)}")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
+            context.startActivity(browserIntent)
         }
     }
 
@@ -114,143 +63,24 @@ class ActionExecutor(private val context: Context) {
             val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
             val cameraId = cameraManager.cameraIdList.firstOrNull() ?: return
             cameraManager.setTorchMode(cameraId, on)
-            DebugLogger.log("ACTION", "Flashlight: $on")
         } catch (e: Exception) {
-            DebugLogger.log("ACTION_ERR", "Flashlight failed: ${e.message}")
+            e.printStackTrace()
         }
     }
 
-    fun getCurrentTime(): String {
-        val formatter = SimpleDateFormat("hh:mm a", Locale.US)
-        return formatter.format(Date())
-    }
-
-    fun getCurrentDate(): String {
-        val formatter = SimpleDateFormat("EEEE, dd MMMM yyyy", Locale.US)
-        return formatter.format(Date())
-    }
-
-    fun getBatteryLevel(): Int {
-        val bm = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
-        return bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-    }
-
     private fun lookupContactNumber(name: String): String? {
-        val hasReadPermission = ContextCompat.checkSelfPermission(
-            context, Manifest.permission.READ_CONTACTS
-        ) == PackageManager.PERMISSION_GRANTED
-
+        val hasReadPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
         if (!hasReadPermission) return null
-
-        val resolver = context.contentResolver
-        val cursor = resolver.query(
+        val cursor = context.contentResolver.query(
             ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-            arrayOf(
-                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-                ContactsContract.CommonDataKinds.Phone.NUMBER
-            ),
+            arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
             "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
             arrayOf("%$name%"),
             null
         )
-
         cursor?.use {
-            if (it.moveToFirst()) {
-                val numberIndex = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
-                return it.getString(numberIndex)
-            }
+            if (it.moveToFirst()) return it.getString(0)
         }
         return null
-    }
-
-    // ============ CALL HANDLING ============
-    fun getContactName(number: String): String? {
-        val hasReadPermission = ContextCompat.checkSelfPermission(
-            context, Manifest.permission.READ_CONTACTS
-        ) == PackageManager.PERMISSION_GRANTED
-
-        if (!hasReadPermission) return null
-
-        try {
-            val uri = Uri.withAppendedPath(
-                ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
-                Uri.encode(number)
-            )
-
-            val cursor = context.contentResolver.query(
-                uri,
-                arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
-                null, null, null
-            )
-
-            cursor?.use {
-                if (it.moveToFirst()) {
-                    return it.getString(0)
-                }
-            }
-        } catch (e: Exception) {
-            DebugLogger.log("ACTION_ERR", "Contact lookup error: ${e.message}")
-        }
-        return null
-    }
-
-    fun isSpamNumber(number: String): Boolean {
-        try {
-            val cleanNumber = number.replace(" ", "").replace("-", "").replace("+", "")
-            val spamPrefixes = listOf("140", "1800", "1860", "1900")
-            for (prefix in spamPrefixes) {
-                if (cleanNumber.startsWith(prefix)) return true
-            }
-            if (cleanNumber.length in 5..6 && cleanNumber.toLongOrNull() != null) {
-                return true
-            }
-            if (cleanNumber.length >= 10) {
-                val uniqueDigits = cleanNumber.toSet()
-                if (uniqueDigits.size <= 2) return true
-            }
-        } catch (e: Exception) {
-            DebugLogger.log("ACTION_ERR", "Spam check error: ${e.message}")
-        }
-        return false
-    }
-
-    fun answerCall(): Boolean {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val telecomManager = context.getSystemService(Context.TELECOM_SERVICE)
-                        as android.telecom.TelecomManager
-
-                if (ContextCompat.checkSelfPermission(
-                        context, Manifest.permission.ANSWER_PHONE_CALLS
-                    ) == PackageManager.PERMISSION_GRANTED
-                ) {
-                    telecomManager.acceptRingingCall()
-                    return true
-                }
-            }
-        } catch (e: Exception) {
-            DebugLogger.log("ACTION_ERR", "Answer failed: ${e.message}")
-        }
-        return false
-    }
-
-    fun rejectCall(): Boolean {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val telecomManager = context.getSystemService(Context.TELECOM_SERVICE)
-                        as android.telecom.TelecomManager
-
-                if (ContextCompat.checkSelfPermission(
-                        context, Manifest.permission.ANSWER_PHONE_CALLS
-                    ) == PackageManager.PERMISSION_GRANTED
-                ) {
-                    telecomManager.endCall()
-                    return true
-                }
-            }
-        } catch (e: Exception) {
-            DebugLogger.log("ACTION_ERR", "Reject failed: ${e.message}")
-        }
-        return false
     }
 }
