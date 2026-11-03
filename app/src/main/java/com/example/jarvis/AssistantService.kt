@@ -32,24 +32,6 @@ class AssistantService : Service() {
         return START_STICKY
     }
 
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        super.onTaskRemoved(rootIntent)
-        try {
-            val restartService = Intent(applicationContext, this.javaClass)
-            restartService.setPackage(packageName)
-            val restartPendingIntent = PendingIntent.getService(
-                applicationContext, 1, restartService,
-                PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
-            )
-            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            alarmManager.set(
-                AlarmManager.ELAPSED_REALTIME,
-                SystemClock.elapsedRealtime() + 500,
-                restartPendingIntent
-            )
-        } catch (_: Exception) {}
-    }
-
     override fun onCreate() {
         super.onCreate()
         try {
@@ -60,11 +42,8 @@ class AssistantService : Service() {
             
             createNotification()
             isListeningActive = true
-            DebugLogger.log("SERVICE", "onCreate started - All clients initialized")
-            
             setupSTT()
             setupTTS()
-            
             startListening()
             
         } catch (e: Exception) {
@@ -76,18 +55,12 @@ class AssistantService : Service() {
         sttClient.setListener(object : AssemblyAISTT.TranscriptionListener {
             override fun onTranscript(text: String, isFinal: Boolean) {
                 if (isFinal && text.isNotBlank() && text.length > 3 && !isProcessing) {
-                    DebugLogger.log("STT", "Final Text: $text")
                     onUserSpoke(text)
                 }
             }
-
             override fun onError(message: String) {
-                DebugLogger.log("STT_ERROR", message)
                 handler.postDelayed({
-                    if (isListeningActive && !isProcessing) {
-                        DebugLogger.log("SERVICE", "Reconnecting STT after error...")
-                        sttClient.startListening()
-                    }
+                    if (isListeningActive && !isProcessing) sttClient.startListening()
                 }, 1500)
             }
         })
@@ -95,18 +68,12 @@ class AssistantService : Service() {
 
     private fun setupTTS() {
         ttsClient.setListener(object : FishAudioTTS.TTSListener {
-            override fun onStart() {
-                DebugLogger.log("TTS", "Speaking started...")
-            }
-
+            override fun onStart() {}
             override fun onDone() {
-                DebugLogger.log("TTS", "Speaking finished.")
                 isProcessing = false
                 handler.postDelayed({ startListening() }, 1500)
             }
-
             override fun onError(message: String) {
-                DebugLogger.log("TTS_ERROR", message)
                 isProcessing = false
                 handler.postDelayed({ startListening() }, 1500)
             }
@@ -115,14 +82,11 @@ class AssistantService : Service() {
 
     private fun startListening() {
         if (!isListeningActive || isProcessing) return
-        DebugLogger.log("SERVICE", "Listening started...")
         sttClient.startListening()
     }
 
     private fun onUserSpoke(text: String) {
         isProcessing = true
-        DebugLogger.log("SERVICE", "Processing User text...")
-        
         sttClient.stopListening() 
 
         if (isDeviceCommand(text)) {
@@ -135,11 +99,9 @@ class AssistantService : Service() {
         apiClient.sendMessage(
             text = text,
             onResponse = { reply ->
-                DebugLogger.log("SERVICE", "AI: $reply")
                 speakResponse(reply)
             },
             onError = { error ->
-                DebugLogger.log("SERVICE", "API Error: $error")
                 isProcessing = false
                 startListening() 
             }
@@ -150,7 +112,6 @@ class AssistantService : Service() {
         ttsClient.speak(responseText)
     }
 
-    // ================= 🔥 हिंदी कमांड्स का लॉजिक =================
     private fun isDeviceCommand(text: String): Boolean {
         val cmd = text.lowercase().replace(" ", "") 
         val keywords = listOf(
@@ -165,58 +126,39 @@ class AssistantService : Service() {
     private fun executeDeviceCommand(text: String) {
         val cmd = text.lowercase().trim()
         val cmdNoSpace = cmd.replace(" ", "")
-        DebugLogger.log("CMD", "Executing: ${cmd.take(60)}")
 
         when {
-            // 🔦 फ्लैशलाइट
-            cmdNoSpace.contains("flashlight") || cmdNoSpace.contains("torch") || 
-            cmdNoSpace.contains("फ्लैशलाइट") || cmdNoSpace.contains("फ्लेशलाइट") || 
-            cmdNoSpace.contains("फ्लासलाइट") || cmdNoSpace.contains("टॉर्च") || cmdNoSpace.contains("लाइट") -> {
-                if (cmd.contains("off") || cmd.contains("band") || cmd.contains("बंद") || cmd.contains("बुझा")) {
+            cmdNoSpace.contains("flashlight") || cmdNoSpace.contains("torch") || cmdNoSpace.contains("फ्लैशलाइट") || cmdNoSpace.contains("लाइट") -> {
+                if (cmd.contains("off") || cmd.contains("band") || cmd.contains("बंद")) {
                     actionExecutor.toggleFlashlight(false)
-                    speakResponse("फ्लैशलाइट बंद कर दी गई है।")
+                    speakResponse("फ्लैशलाइट बंद।")
                 } else {
                     actionExecutor.toggleFlashlight(true)
-                    speakResponse("फ्लैशलाइट चालू कर दी गई है।")
+                    speakResponse("फ्लैशलाइट चालू।")
                 }
             }
-            // 📞 कॉल
             cmdNoSpace.contains("call") || cmdNoSpace.contains("phone") || cmdNoSpace.contains("कॉल") || cmdNoSpace.contains("फोन") -> {
                 var name = cmd
-                val wordsToRemove = listOf("call", "karo", "phone", "to", "please", "कॉल", "फोन", "करो", "को", "कर", "मिलाओ", "डायल")
-                for (word in wordsToRemove) {
-                    name = name.replace(word, "")
-                }
+                val wordsToRemove = listOf("call", "karo", "phone", "to", "please", "कॉल", "फोन", "करो", "को", "कर", "मिलाओ")
+                for (word in wordsToRemove) name = name.replace(word, "")
                 name = name.trim()
                 
                 if (name.isNotBlank()) {
-                    val success = actionExecutor.callContact(name)
-                    if (success) speakResponse("कॉलिंग $name")
-                    else speakResponse("माफ करना, मुझे $name का नंबर नहीं मिला।")
-                } else {
-                    speakResponse("मुझे नाम समझ नहीं आया, कृपया दोबारा बोलें।")
+                    if (actionExecutor.callContact(name)) speakResponse("कॉलिंग $name")
+                    else speakResponse("नंबर नहीं मिला।")
                 }
             }
-            // 📺 यूट्यूब
-            cmdNoSpace.contains("youtube") || cmdNoSpace.contains("play") || cmdNoSpace.contains("gana") || cmdNoSpace.contains("song") || 
-            cmdNoSpace.contains("गाना") || cmdNoSpace.contains("चलाओ") || cmdNoSpace.contains("यूट्यूब") -> {
-                val query = cmd
-                    .replace("play", "").replace("on youtube", "").replace("youtube", "").replace("song", "").replace("gana", "").replace("chalao", "").replace("please", "")
-                    .replace("यूट्यूब", "").replace("पर", "").replace("पे", "").replace("गाना", "").replace("चलाओ", "").replace("चला", "").trim()
+            cmdNoSpace.contains("youtube") || cmdNoSpace.contains("play") || cmdNoSpace.contains("gana") || cmdNoSpace.contains("गाना") || cmdNoSpace.contains("चलाओ") -> {
+                val query = cmd.replace("play", "").replace("youtube", "").replace("song", "").replace("gana", "").replace("chalao", "").replace("यूट्यूब", "").replace("गाना", "").replace("चलाओ", "").trim()
                 if (query.isNotBlank()) {
                     actionExecutor.playOnYoutube(query)
-                    speakResponse("यूट्यूब पर $query चला रही हूँ।")
+                    speakResponse("यूट्यूब चला रही हूँ।")
                 }
             }
-            // 📱 ऐप खोलना
             cmd.startsWith("open ") || cmd.contains("kholo") || cmd.contains("खोलो") || cmd.contains("ओपन") -> {
-                val app = cmd
-                    .replace("open", "").replace("kholo", "").replace("please", "")
-                    .replace("ओपन", "").replace("खोलो", "").replace("करो", "").trim()
+                val app = cmd.replace("open", "").replace("kholo", "").replace("ओपन", "").replace("खोलो", "").replace("करो", "").trim()
                 if (app.isNotBlank()) {
-                    val success = actionExecutor.openApp(app)
-                    if (success) speakResponse("$app खोल रही हूँ।")
-                    else speakResponse("माफ करना, मुझे $app नहीं मिला।")
+                    if (actionExecutor.openApp(app)) speakResponse("$app खोल रही हूँ।")
                 }
             }
         }
@@ -225,29 +167,18 @@ class AssistantService : Service() {
     private fun createNotification() {
         val channelId = "jarvis_channel"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId, "Jarvis Service", NotificationManager.IMPORTANCE_LOW
-            )
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+            val channel = NotificationChannel(channelId, "Jarvis Service", NotificationManager.IMPORTANCE_LOW)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
-
         val notification: Notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("Jarvis AI")
-            .setContentText("Voice Assistant Active")
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setOngoing(true)
-            .build()
-
+            .setContentTitle("Jarvis AI").setContentText("Active").setSmallIcon(android.R.drawable.ic_btn_speak_now).setOngoing(true).build()
         startForeground(1, notification)
     }
 
     override fun onDestroy() {
         super.onDestroy()
         isListeningActive = false
-        handler.removeCallbacksAndMessages(null)
         try { sttClient.stopListening() } catch (_: Exception) {}
         try { ttsClient.stop() } catch (_: Exception) {}
-        DebugLogger.log("SERVICE", "Service Destroyed")
     }
 }
