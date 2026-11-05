@@ -24,11 +24,8 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.statusText)
         debugText = findViewById(R.id.debugText)
 
-        // Debug logger setup
         DebugLogger.setListener { msg ->
-            runOnUiThread {
-                debugText.append("$msg\n")
-            }
+            runOnUiThread { debugText.append("$msg\n") }
         }
 
         requestAllPermissions()
@@ -43,17 +40,30 @@ class MainActivity : AppCompatActivity() {
             statusText.text = "Jarvis is running..."
             DebugLogger.log("JARVIS_APP", "Service started")
             
-            // 🔥 यहाँ this पास कर दिया है
-            val apiClient = JarvisApiClient(this)
-            apiClient.sendMessage(
-                text = "नमस्ते जार्विस, तुम कौन हो?",
-                onResponse = { reply ->
-                    DebugLogger.log("TEST_API", "✅ API Reply: $reply")
-                },
-                onError = { error ->
-                    DebugLogger.log("TEST_API", "❌ API Error: $error")
+            // 🔥 टेस्ट API कॉल (यहाँ भी /chat जोड़ें)
+            // अगर यह टेस्ट कोड हटाना चाहो तो हटा सकते हो, लेकिन अभी के लिए सही कर दे रहे हैं
+            val testApiUrl = "https://footwork-upscale-oxidant.ngrok-free.dev/chat"
+            val apiClient = okhttp3.OkHttpClient()
+            val json = org.json.JSONObject().put("text", "नमस्ते जार्विस, तुम कौन हो?")
+            val body = okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), json.toString())
+            val request = okhttp3.Request.Builder()
+                .url(testApiUrl)
+                .post(body)
+                .addHeader("ngrok-skip-browser-warning", "true")
+                .build()
+
+            apiClient.newCall(request).enqueue(object : okhttp3.Callback {
+                override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                    DebugLogger.log("TEST_API", "❌ API Error: ${e.message}")
                 }
-            )
+                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                    if (response.isSuccessful) {
+                        DebugLogger.log("TEST_API", "✅ API Reply: ${response.body?.string()}")
+                    } else {
+                        DebugLogger.log("TEST_API", "❌ API Error: Server Error: ${response.code}")
+                    }
+                }
+            })
         }
 
         findViewById<Button>(R.id.stopButton).setOnClickListener {
