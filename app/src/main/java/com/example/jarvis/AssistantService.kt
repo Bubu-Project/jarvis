@@ -36,7 +36,10 @@ class AssistantService : Service() {
         super.onCreate()
         try {
             actionExecutor = ActionExecutor(this)
-            apiClient = JarvisApiClient(this)
+            
+            // 🔥 यहाँ से (this) हटा दिया गया है
+            apiClient = JarvisApiClient() 
+            
             sttClient = AssemblyAISTT(this)
             ttsClient = FishAudioTTS(this)
             
