@@ -1,30 +1,27 @@
 package com.example.jarvis
 
-import android.app.AlarmManager
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.app.Service
+import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.media.MediaPlayer
+import android.media.MediaRecorder
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.os.SystemClock
 import androidx.core.app.NotificationCompat
+import java.io.File
+import java.io.IOException
 
 class AssistantService : Service() {
 
     private lateinit var apiClient: JarvisApiClient
     private lateinit var actionExecutor: ActionExecutor
-    private lateinit var sttClient: AssemblyAISTT
-    private lateinit var ttsClient: FishAudioTTS
-
+    
+    private var mediaRecorder: MediaRecorder? = null
+    private var mediaPlayer: MediaPlayer? = null
+    private var audioFile: File? = null
     private val handler = Handler(Looper.getMainLooper())
-    private var isProcessing = false
-    private var isListeningActive = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -36,134 +33,83 @@ class AssistantService : Service() {
         super.onCreate()
         try {
             actionExecutor = ActionExecutor(this)
-            
-            // 🔥 यहाँ से (this) हटा दिया गया है
-            apiClient = JarvisApiClient() 
-            
-            sttClient = AssemblyAISTT(this)
-            ttsClient = FishAudioTTS(this)
+            apiClient = JarvisApiClient(this)
             
             createNotification()
-            isListeningActive = true
-            setupSTT()
-            setupTTS()
-            startListening()
+            startRecording()
             
         } catch (e: Exception) {
             DebugLogger.log("SERVICE", "CRASH: ${e.message}")
         }
     }
 
-    private fun setupSTT() {
-        sttClient.setListener(object : AssemblyAISTT.TranscriptionListener {
-            override fun onTranscript(text: String, isFinal: Boolean) {
-                if (isFinal && text.isNotBlank() && text.length > 3 && !isProcessing) {
-                    onUserSpoke(text)
-                }
-            }
-            override fun onError(message: String) {
-                handler.postDelayed({
-                    if (isListeningActive && !isProcessing) sttClient.startListening()
-                }, 1500)
-            }
-        })
-    }
-
-    private fun setupTTS() {
-        ttsClient.setListener(object : FishAudioTTS.TTSListener {
-            override fun onStart() {}
-            override fun onDone() {
-                isProcessing = false
-                handler.postDelayed({ startListening() }, 1500)
-            }
-            override fun onError(message: String) {
-                isProcessing = false
-                handler.postDelayed({ startListening() }, 1500)
-            }
-        })
-    }
-
-    private fun startListening() {
-        if (!isListeningActive || isProcessing) return
-        sttClient.startListening()
-    }
-
-    private fun onUserSpoke(text: String) {
-        isProcessing = true
-        sttClient.stopListening() 
-
-        if (isDeviceCommand(text)) {
-            executeDeviceCommand(text)
-            isProcessing = false
-            handler.postDelayed({ startListening() }, 1000)
-            return
+    private fun startRecording() {
+        audioFile = File(cacheDir, "input_audio.wav")
+        mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            MediaRecorder(this)
+        } else {
+            @Suppress("DEPRECATION")
+            MediaRecorder()
         }
 
-        apiClient.sendMessage(
-            text = text,
-            onResponse = { reply ->
-                speakResponse(reply)
-            },
-            onError = { error ->
-                isProcessing = false
-                startListening() 
+        try {
+            mediaRecorder?.apply {
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+                setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP)
+                setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB)
+                setOutputFile(audioFile?.absolutePath)
+                prepare()
+                start()
             }
-        )
+            DebugLogger.log("SERVICE", "Recording started...")
+            
+            // 🔥 4 सेकंड बाद रिकॉर्डिंग अपने आप रुक जाएगी और API को जाएगी
+            handler.postDelayed({ stopRecordingAndProcess() }, 4000)
+            
+        } catch (e: IOException) {
+            DebugLogger.log("SERVICE", "Recording failed: ${e.message}")
+        }
     }
 
-    private fun speakResponse(responseText: String) {
-        ttsClient.speak(responseText)
+    private fun stopRecordingAndProcess() {
+        try {
+            mediaRecorder?.stop()
+            mediaRecorder?.release()
+            mediaRecorder = null
+            DebugLogger.log("SERVICE", "Recording stopped. Sending to API...")
+            
+            audioFile?.let { file ->
+                apiClient.sendAudio(file, 
+                    onResponse = { replyAudio ->
+                        playAudio(replyAudio)
+                    },
+                    onError = { error ->
+                        DebugLogger.log("SERVICE", "API Error: $error")
+                        startRecording() // Error aane par fir se record karo
+                    }
+                )
+            }
+        } catch (e: Exception) {
+            DebugLogger.log("SERVICE", "Stop failed: ${e.message}")
+        }
     }
 
-    private fun isDeviceCommand(text: String): Boolean {
-        val cmd = text.lowercase().replace(" ", "") 
-        val keywords = listOf(
-            "flashlight", "torch", "फ्लैशलाइट", "टॉर्च", "लाइट", "फ्लेशलाइट", "फ्लासलाइट", "टोर्च", 
-            "call", "phone", "कॉल", "फोन", "मिलाओ", "डायल",
-            "youtube", "play", "gana", "song", "गाना", "चलाओ", "यूट्यूब", "बजाओ", 
-            "open", "kholo", "खोलो", "ओपन"
-        )
-        return keywords.any { cmd.contains(it) }
-    }
-
-    private fun executeDeviceCommand(text: String) {
-        val cmd = text.lowercase().trim()
-        val cmdNoSpace = cmd.replace(" ", "")
-
-        when {
-            cmdNoSpace.contains("flashlight") || cmdNoSpace.contains("torch") || cmdNoSpace.contains("फ्लैशलाइट") || cmdNoSpace.contains("लाइट") -> {
-                if (cmd.contains("off") || cmd.contains("band") || cmd.contains("बंद")) {
-                    actionExecutor.toggleFlashlight(false)
-                    speakResponse("फ्लैशलाइट बंद।")
-                } else {
-                    actionExecutor.toggleFlashlight(true)
-                    speakResponse("फ्लैशलाइट चालू।")
+    private fun playAudio(file: File) {
+        try {
+            mediaPlayer?.release()
+            mediaPlayer = MediaPlayer().apply {
+                setDataSource(file.absolutePath)
+                setOnCompletionListener {
+                    DebugLogger.log("SERVICE", "Playback finished. Listening again...")
+                    handler.postDelayed({ startRecording() }, 1000)
                 }
+                prepare()
+                start()
             }
-            cmdNoSpace.contains("call") || cmdNoSpace.contains("phone") || cmdNoSpace.contains("कॉल") || cmdNoSpace.contains("फोन") -> {
-                var name = cmd
-                val wordsToRemove = listOf("call", "karo", "phone", "to", "please", "कॉल", "फोन", "करो", "को", "कर", "मिलाओ")
-                for (word in wordsToRemove) name = name.replace(word, "")
-                name = name.trim()
-                
-                if (name.isNotBlank()) {
-                    if (actionExecutor.callContact(name)) speakResponse("कॉलिंग $name")
-                    else speakResponse("नंबर नहीं मिला।")
-                }
-            }
-            cmdNoSpace.contains("youtube") || cmdNoSpace.contains("play") || cmdNoSpace.contains("gana") || cmdNoSpace.contains("गाना") || cmdNoSpace.contains("चलाओ") -> {
-                val query = cmd.replace("play", "").replace("youtube", "").replace("song", "").replace("gana", "").replace("chalao", "").replace("यूट्यूब", "").replace("गाना", "").replace("चलाओ", "").trim()
-                if (query.isNotBlank()) {
-                    actionExecutor.playOnYoutube(query)
-                    speakResponse("यूट्यूब चला रही हूँ।")
-                }
-            }
-            cmd.startsWith("open ") || cmd.contains("kholo") || cmd.contains("खोलो") || cmd.contains("ओपन") -> {
-                val app = cmd.replace("open", "").replace("kholo", "").replace("ओपन", "").replace("खोलो", "").replace("करो", "").trim()
-                if (app.isNotBlank()) {
-                    if (actionExecutor.openApp(app)) speakResponse("$app खोल रही हूँ।")
-                }
-            }
+            DebugLogger.log("SERVICE", "Playing Jarvis reply...")
+        } catch (e: Exception) {
+            DebugLogger.log("SERVICE", "Playback failed: ${e.message}")
+            handler.postDelayed({ startRecording() }, 1000)
         }
     }
 
@@ -180,8 +126,8 @@ class AssistantService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        isListeningActive = false
-        try { sttClient.stopListening() } catch (_: Exception) {}
-        try { ttsClient.stop() } catch (_: Exception) {}
+        handler.removeCallbacksAndMessages(null)
+        try { mediaRecorder?.release() } catch (_: Exception) {}
+        try { mediaPlayer?.release() } catch (_: Exception) {}
     }
 }
