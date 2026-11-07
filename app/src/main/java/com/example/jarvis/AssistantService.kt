@@ -12,39 +12,28 @@ import androidx.core.app.NotificationCompat
 import java.io.File
 
 class AssistantService : Service() {
-
     private lateinit var apiClient: JarvisApiClient
     private lateinit var actionExecutor: ActionExecutor
     private lateinit var audioRecorder: AudioRecorderHelper
-    
     private var mediaPlayer: MediaPlayer? = null
     private var audioFile: File? = null
     private val handler = Handler(Looper.getMainLooper())
 
     override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        return START_STICKY
-    }
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
     override fun onCreate() {
         super.onCreate()
-        try {
-            apiClient = JarvisApiClient(this)
-            actionExecutor = ActionExecutor(this) // 🔥 Commands wapas aagaye
-            audioRecorder = AudioRecorderHelper(this)
-            createNotification()
-            startListening()
-        } catch (e: Exception) {
-            DebugLogger.log("SERVICE", "CRASH: ${e.message}")
-        }
+        apiClient = JarvisApiClient(this)
+        actionExecutor = ActionExecutor(this)
+        audioRecorder = AudioRecorderHelper()
+        createNotification()
+        startListening()
     }
 
     private fun startListening() {
         audioFile = File(cacheDir, "input_audio.wav")
-        DebugLogger.log("SERVICE", "Listening started... (Speak now)")
-        
-        // 🔥 Jab tak chup nahi hoga, record karta rahega
+        DebugLogger.log("SERVICE", "Listening... Speak now")
         audioRecorder.startRecording(audioFile!!) {
             DebugLogger.log("SERVICE", "Silence detected. Sending to API...")
             sendToApi()
@@ -53,13 +42,11 @@ class AssistantService : Service() {
 
     private fun sendToApi() {
         audioFile?.let { file ->
-            if (file.length() < 2000) { // Agar bahut chhoti file hai (sirf noise)
-                startListening() 
-                return
-            }
-            
+            if (file.length() < 2000) { startListening(); return }
             apiClient.sendAudio(file, 
-                onResponse = { replyAudio ->
+                onResponse = { replyAudio, userText ->
+                    // 🔥 यहाँ Commands चेक होंगे
+                    checkAndExecuteCommand(userText)
                     playAudio(replyAudio)
                 },
                 onError = { error ->
@@ -67,6 +54,15 @@ class AssistantService : Service() {
                     startListening() 
                 }
             )
+        }
+    }
+
+    private fun checkAndExecuteCommand(text: String) {
+        val cmd = text.lowercase()
+        if (cmd.contains("flashlight") || cmd.contains("फ्लैशलाइट") || cmd.contains("टॉर्च")) {
+            actionExecutor.toggleFlashlight(!cmd.contains("off") && !cmd.contains("बंद"))
+        } else if (cmd.contains("youtube") || cmd.contains("गाना") || cmd.contains("play")) {
+            actionExecutor.playOnYoutube(cmd.replace("play", "").replace("youtube", "").trim())
         }
     }
 
@@ -79,25 +75,18 @@ class AssistantService : Service() {
                     DebugLogger.log("SERVICE", "Playback finished. Listening again...")
                     handler.postDelayed({ startListening() }, 500)
                 }
-                prepare()
-                start()
+                prepare(); start()
             }
-            DebugLogger.log("SERVICE", "Playing Jarvis reply...")
-        } catch (e: Exception) {
-            DebugLogger.log("SERVICE", "Playback failed: ${e.message}")
-            handler.postDelayed({ startListening() }, 1000)
-        }
+        } catch (e: Exception) { handler.postDelayed({ startListening() }, 1000) }
     }
 
     private fun createNotification() {
         val channelId = "jarvis_channel"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(channelId, "Jarvis Service", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(channelId, "Jarvis", NotificationManager.IMPORTANCE_LOW)
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
-        val notification: Notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("Jarvis AI").setContentText("Active").setSmallIcon(android.R.drawable.ic_btn_speak_now).setOngoing(true).build()
-        startForeground(1, notification)
+        startForeground(1, NotificationCompat.Builder(this, channelId).setContentTitle("Jarvis AI").setSmallIcon(android.R.drawable.ic_btn_speak_now).build())
     }
 
     override fun onDestroy() {
