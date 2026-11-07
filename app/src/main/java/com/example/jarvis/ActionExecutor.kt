@@ -1,100 +1,47 @@
 package com.example.jarvis
 
-import android.Manifest
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.hardware.camera2.CameraManager
 import android.net.Uri
-import android.os.Build
 import android.provider.ContactsContract
-import android.telephony.SmsManager
-import androidx.core.content.ContextCompat
 
 class ActionExecutor(private val context: Context) {
+    private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+
+    fun toggleFlashlight(on: Boolean) {
+        try { cameraManager.setTorchMode(cameraManager.cameraIdList[0], on) } catch (_: Exception) {}
+    }
+
+    fun callContact(name: String): Boolean {
+        try {
+            val uri = Uri.withAppendedPath(ContactsContract.CommonDataKinds.Phone.CONTENT_FILTER_URI, Uri.encode(name))
+            val cursor = context.contentResolver.query(uri, arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER), null, null, null)
+            if (cursor != null && cursor.moveToFirst()) {
+                val number = cursor.getString(0)
+                cursor.close()
+                val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:$number"))
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+                return true
+            }
+        } catch (_: Exception) {}
+        return false
+    }
+
+    fun playOnYoutube(query: String) {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$query"))
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+    }
 
     fun openApp(appName: String): Boolean {
         val pm = context.packageManager
-        val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
-        val normalizedQuery = appName.lowercase().replace(" ", "")
-        val match = apps.firstOrNull {
-            pm.getApplicationLabel(it).toString().lowercase().replace(" ", "").contains(normalizedQuery)
-        } ?: return false
-
+        val apps = pm.getInstalledApplications(0)
+        val match = apps.firstOrNull { pm.getApplicationLabel(it).toString().lowercase().contains(appName.lowercase()) } ?: return false
         val launchIntent = pm.getLaunchIntentForPackage(match.packageName) ?: return false
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(launchIntent)
         return true
-    }
-
-    fun callContact(name: String): Boolean {
-        val phoneNumber = lookupContactNumber(name) ?: return false
-        val hasCallPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
-        val intent = if (hasCallPermission) Intent(Intent.ACTION_CALL) else Intent(Intent.ACTION_DIAL)
-        intent.data = Uri.parse("tel:$phoneNumber")
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
-        return true
-    }
-
-    // 🔥 यह वो फंक्शन है जो मिसिंग था
-    fun sendSms(name: String, message: String): Boolean {
-        val phoneNumber = lookupContactNumber(name) ?: return false
-        try {
-            val smsManager: SmsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                context.getSystemService(SmsManager::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                SmsManager.getDefault()
-            }
-            smsManager.sendTextMessage(phoneNumber, null, message, null, null)
-            return true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return false
-        }
-    }
-
-    fun playOnYoutube(query: String) {
-        val youtubeIntent = Intent(Intent.ACTION_SEARCH).apply {
-            setPackage("com.google.android.youtube")
-            putExtra("query", query)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        try {
-            context.startActivity(youtubeIntent)
-        } catch (e: Exception) {
-            val browserIntent = Intent(Intent.ACTION_VIEW).apply {
-                data = Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(query)}")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(browserIntent)
-        }
-    }
-
-    fun toggleFlashlight(on: Boolean) {
-        try {
-            val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-            val cameraId = cameraManager.cameraIdList.firstOrNull() ?: return
-            cameraManager.setTorchMode(cameraId, on)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    private fun lookupContactNumber(name: String): String? {
-        val hasReadPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
-        if (!hasReadPermission) return null
-        val cursor = context.contentResolver.query(
-            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-            arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
-            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
-            arrayOf("%$name%"),
-            null
-        )
-        cursor?.use {
-            if (it.moveToFirst()) return it.getString(0)
-        }
-        return null
     }
 }
