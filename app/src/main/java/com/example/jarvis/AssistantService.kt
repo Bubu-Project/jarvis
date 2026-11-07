@@ -4,21 +4,19 @@ import android.app.*
 import android.content.Context
 import android.content.Intent
 import android.media.MediaPlayer
-import android.media.MediaRecorder
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import androidx.core.app.NotificationCompat
 import java.io.File
-import java.io.IOException
 
 class AssistantService : Service() {
 
     private lateinit var apiClient: JarvisApiClient
     private lateinit var actionExecutor: ActionExecutor
+    private lateinit var audioRecorder: AudioRecorderHelper
     
-    private var mediaRecorder: MediaRecorder? = null
     private var mediaPlayer: MediaPlayer? = null
     private var audioFile: File? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -32,65 +30,43 @@ class AssistantService : Service() {
     override fun onCreate() {
         super.onCreate()
         try {
-            actionExecutor = ActionExecutor(this)
             apiClient = JarvisApiClient(this)
-            
+            actionExecutor = ActionExecutor(this) // 🔥 Commands wapas aagaye
+            audioRecorder = AudioRecorderHelper(this)
             createNotification()
-            startRecording()
-            
+            startListening()
         } catch (e: Exception) {
             DebugLogger.log("SERVICE", "CRASH: ${e.message}")
         }
     }
 
-    private fun startRecording() {
+    private fun startListening() {
         audioFile = File(cacheDir, "input_audio.wav")
-        mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            MediaRecorder(this)
-        } else {
-            @Suppress("DEPRECATION")
-            MediaRecorder()
-        }
-
-        try {
-            mediaRecorder?.apply {
-                setAudioSource(MediaRecorder.AudioSource.MIC)
-                setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP)
-                setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB)
-                setOutputFile(audioFile?.absolutePath)
-                prepare()
-                start()
-            }
-            DebugLogger.log("SERVICE", "Recording started...")
-            
-            // 🔥 4 सेकंड बाद रिकॉर्डिंग अपने आप रुक जाएगी और API को जाएगी
-            handler.postDelayed({ stopRecordingAndProcess() }, 4000)
-            
-        } catch (e: IOException) {
-            DebugLogger.log("SERVICE", "Recording failed: ${e.message}")
+        DebugLogger.log("SERVICE", "Listening started... (Speak now)")
+        
+        // 🔥 Jab tak chup nahi hoga, record karta rahega
+        audioRecorder.startRecording(audioFile!!) {
+            DebugLogger.log("SERVICE", "Silence detected. Sending to API...")
+            sendToApi()
         }
     }
 
-    private fun stopRecordingAndProcess() {
-        try {
-            mediaRecorder?.stop()
-            mediaRecorder?.release()
-            mediaRecorder = null
-            DebugLogger.log("SERVICE", "Recording stopped. Sending to API...")
-            
-            audioFile?.let { file ->
-                apiClient.sendAudio(file, 
-                    onResponse = { replyAudio ->
-                        playAudio(replyAudio)
-                    },
-                    onError = { error ->
-                        DebugLogger.log("SERVICE", "API Error: $error")
-                        startRecording() // Error aane par fir se record karo
-                    }
-                )
+    private fun sendToApi() {
+        audioFile?.let { file ->
+            if (file.length() < 2000) { // Agar bahut chhoti file hai (sirf noise)
+                startListening() 
+                return
             }
-        } catch (e: Exception) {
-            DebugLogger.log("SERVICE", "Stop failed: ${e.message}")
+            
+            apiClient.sendAudio(file, 
+                onResponse = { replyAudio ->
+                    playAudio(replyAudio)
+                },
+                onError = { error ->
+                    DebugLogger.log("SERVICE", "API Error: $error")
+                    startListening() 
+                }
+            )
         }
     }
 
@@ -101,7 +77,7 @@ class AssistantService : Service() {
                 setDataSource(file.absolutePath)
                 setOnCompletionListener {
                     DebugLogger.log("SERVICE", "Playback finished. Listening again...")
-                    handler.postDelayed({ startRecording() }, 1000)
+                    handler.postDelayed({ startListening() }, 500)
                 }
                 prepare()
                 start()
@@ -109,7 +85,7 @@ class AssistantService : Service() {
             DebugLogger.log("SERVICE", "Playing Jarvis reply...")
         } catch (e: Exception) {
             DebugLogger.log("SERVICE", "Playback failed: ${e.message}")
-            handler.postDelayed({ startRecording() }, 1000)
+            handler.postDelayed({ startListening() }, 1000)
         }
     }
 
@@ -127,7 +103,7 @@ class AssistantService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacksAndMessages(null)
-        try { mediaRecorder?.release() } catch (_: Exception) {}
+        try { audioRecorder.stopRecording() } catch (_: Exception) {}
         try { mediaPlayer?.release() } catch (_: Exception) {}
     }
 }
