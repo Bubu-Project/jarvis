@@ -19,6 +19,26 @@ class AssistantService : Service() {
     private var audioFile: File? = null
     private val handler = Handler(Looper.getMainLooper())
 
+    // busy = server ko bhej rahe hain ya Jarvis bol raha hai (tab notification poll nahi hoti)
+    @Volatile private var busy = false
+    private var recording = false
+    private var suppressNext = false
+    private var pendingNotif: File? = null
+
+    // Har 4 second mein server se poochta hai: koi agent ka kaam pura hua?
+    private val poller = object : Runnable {
+        override fun run() {
+            if (!busy) {
+                apiClient.fetchNotification { file ->
+                    if (file != null) {
+                        if (busy) pendingNotif = file else playNotification(file)
+                    }
+                }
+            }
+            handler.postDelayed(this, 4000)
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
@@ -29,40 +49,73 @@ class AssistantService : Service() {
         audioRecorder = AudioRecorderHelper()
         createNotification()
         startListening()
+        handler.postDelayed(poller, 4000)
     }
 
     private fun startListening() {
+        busy = false
+        pendingNotif?.let { n ->
+            pendingNotif = null
+            playNotification(n)
+            return
+        }
         audioFile = File(cacheDir, "input_audio.wav")
         DebugLogger.log("SERVICE", "Listening... Speak now")
+        recording = true
         audioRecorder.startRecording(audioFile!!) {
-            DebugLogger.log("SERVICE", "Silence detected. Sending to API...")
-            sendToApi()
+            recording = false
+            if (suppressNext) {
+                // notification bolne ke liye recording rok di gayi thi
+                suppressNext = false
+            } else {
+                DebugLogger.log("SERVICE", "Silence detected. Sending to API...")
+                sendToApi()
+            }
         }
     }
 
     private fun sendToApi() {
         audioFile?.let { file ->
             if (file.length() < 2000) { startListening(); return }
+            busy = true
             apiClient.sendAudio(file,
-                onResponse = { replyAudio, userText ->
+                onResponse = { replyAudio, userText, action ->
                     DebugLogger.log("SERVICE", "User said: $userText")
-                    if (checkAndExecuteCommand(userText)) {
-                        // Command chala, LLM ki awaaz skip karke dobara suno
-                        DebugLogger.log("SERVICE", "Command executed")
-                        handler.postDelayed({ startListening() }, 1500)
+                    if (action != "none") {
+                        // Server ne phone command bataya: app khud chalayega
+                        val done = checkAndExecuteCommand(userText)
+                        if (done) {
+                            handler.postDelayed({ startListening() }, 1500)
+                        } else {
+                            playAudio(replyAudio)
+                        }
                     } else {
                         playAudio(replyAudio)
                     }
                 },
                 onError = { error ->
-                    DebugLogger.log("SERVICE", "API Error: $error")
+                    if (error == "IGNORED") {
+                        DebugLogger.log("SERVICE", "Jarvis so raha hai (wake word nahi bola)")
+                    } else {
+                        DebugLogger.log("SERVICE", "API Error: $error")
+                    }
                     startListening()
                 }
             )
         }
     }
 
-    // true = command mila aur chala, false = normal baat-cheet
+    private fun playNotification(file: File) {
+        DebugLogger.log("SERVICE", "Jarvis task update bata raha hai")
+        busy = true
+        if (recording) {
+            suppressNext = true
+            audioRecorder.stopRecording()
+        }
+        playAudio(file)
+    }
+
+    // true = command mila aur chala, false = nahi mila
     private fun checkAndExecuteCommand(text: String): Boolean {
         val cmd = text.lowercase().trim()
         if (cmd.isBlank()) return false
@@ -75,7 +128,7 @@ class AssistantService : Service() {
         }
 
         when {
-            has("flashlight", "flash", "torch", "फ्लैशलाइट", "फ्लैश", "फ़्लैश", "टॉर्च", "टार्च") -> {
+            has("flashlight", "flash", "torch", "light", "फ्लैशलाइट", "फ्लैश", "फ़्लैश", "टॉर्च", "टार्च", "लाइट") -> {
                 actionExecutor.toggleFlashlight(!has("off", "बंद", "बन्द", "ऑफ", "बुझा"))
             }
             has("youtube", "यूट्यूब", "गाना", "play", "प्ले") -> {
