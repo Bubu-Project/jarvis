@@ -14,7 +14,10 @@ import java.io.File
 class AssistantService : Service() {
     private lateinit var apiClient: JarvisApiClient
     private lateinit var actionExecutor: ActionExecutor
+    private lateinit var commandRouter: CommandRouter
     private lateinit var audioRecorder: AudioRecorderHelper
+    private lateinit var speaker: LocalSpeaker
+    private lateinit var callHandler: PhoneCallHandler
     private var mediaPlayer: MediaPlayer? = null
     private var audioFile: File? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -25,13 +28,22 @@ class AssistantService : Service() {
     private var suppressNext = false
     private var pendingNotif: File? = null
 
+    // callMode = phone ring ho raha hai ya call chal rahi hai: tab Jarvis normal sunna band rakhta hai
+    @Volatile private var callMode = false
+
+    // Streaming: vaakya ke tukde queue mein aate hain aur ek ke baad ek bajte hain
+    private val playQueue = java.util.ArrayDeque<File>()
+    private var playing = false
+    private var streamDone = true
+    private var streamLogged = false
+
     // Har 4 second mein server se poochta hai: koi agent ka kaam pura hua?
     private val poller = object : Runnable {
         override fun run() {
-            if (!busy) {
+            if (!busy && !callMode) {
                 apiClient.fetchNotification { file ->
                     if (file != null) {
-                        if (busy) pendingNotif = file else playNotification(file)
+                        if (busy || callMode) pendingNotif = file else playNotification(file)
                     }
                 }
             }
@@ -46,14 +58,39 @@ class AssistantService : Service() {
         super.onCreate()
         apiClient = JarvisApiClient(this)
         actionExecutor = ActionExecutor(this)
+        commandRouter = CommandRouter(actionExecutor)
         audioRecorder = AudioRecorderHelper()
+        speaker = LocalSpeaker(this)
+        callHandler = PhoneCallHandler(
+            context = this,
+            audioRecorder = audioRecorder,
+            apiClient = apiClient,
+            speaker = speaker,
+            onCallStarted = {
+                callMode = true
+                busy = true
+                if (recording) {
+                    suppressNext = true
+                    audioRecorder.stopRecording()
+                }
+            },
+            onCallEnded = {
+                callMode = false
+                startListening()
+            }
+        )
+        callHandler.register()
         createNotification()
         startListening()
         handler.postDelayed(poller, 4000)
     }
 
     private fun startListening() {
+        if (callMode) return   // call ke dauran normal sunna band
         busy = false
+        playQueue.clear()
+        playing = false
+        streamDone = true
         pendingNotif?.let { n ->
             pendingNotif = null
             playNotification(n)
@@ -65,7 +102,7 @@ class AssistantService : Service() {
         audioRecorder.startRecording(audioFile!!) {
             recording = false
             if (suppressNext) {
-                // notification bolne ke liye recording rok di gayi thi
+                // notification / call ke liye recording rok di gayi thi
                 suppressNext = false
             } else {
                 DebugLogger.log("SERVICE", "Silence detected. Sending to API...")
@@ -75,24 +112,38 @@ class AssistantService : Service() {
     }
 
     private fun sendToApi() {
+        if (callMode) return
         audioFile?.let { file ->
             if (file.length() < 2000) { startListening(); return }
             busy = true
+            playQueue.clear()
+            playing = false
+            streamDone = false
+            streamLogged = false
             apiClient.sendAudio(file,
                 onResponse = { replyAudio, userText, action ->
                     DebugLogger.log("SERVICE", "User said: $userText")
                     if (action != "none") {
                         // Server ne phone command bataya: app khud chalayega
-                        val done = checkAndExecuteCommand(userText)
-                        if (done) {
-                            handler.postDelayed({ startListening() }, 1500)
-                        } else {
-                            playAudio(replyAudio)
+                        val say = commandRouter.execute(userText)
+                        when {
+                            say == null -> playAudio(replyAudio)          // samajh nahi aaya: server ka "ठीक है।"
+                            say.isBlank() -> handler.postDelayed({ startListening() }, 1500)
+                            else -> speaker.speak(say) { startListening() }
                         }
                     } else {
                         playAudio(replyAudio)
                     }
                 },
+                onStreamChunk = { chunk, userText ->
+                    if (!streamLogged) {
+                        streamLogged = true
+                        DebugLogger.log("SERVICE", "User said: $userText")
+                        DebugLogger.log("SERVICE", "Jarvis bolna shuru (streaming)")
+                    }
+                    enqueueChunk(chunk)
+                },
+                onStreamEnd = { onStreamFinished() },
                 onError = { error ->
                     if (error == "IGNORED") {
                         DebugLogger.log("SERVICE", "Jarvis so raha hai (wake word nahi bola)")
@@ -102,6 +153,42 @@ class AssistantService : Service() {
                     startListening()
                 }
             )
+        }
+    }
+
+    // ---------- Streaming playback ----------
+    private fun enqueueChunk(f: File) {
+        if (callMode) return
+        playQueue.addLast(f)
+        if (!playing) playNext()
+    }
+
+    private fun playNext() {
+        val f = playQueue.pollFirst()
+        if (f == null) {
+            playing = false
+            // sab bajh chuka aur server ka jawab bhi khatam: dobara suno
+            if (streamDone) handler.postDelayed({ startListening() }, 500)
+            return
+        }
+        playing = true
+        try {
+            mediaPlayer?.release()
+            mediaPlayer = MediaPlayer().apply {
+                setDataSource(f.absolutePath)
+                setOnCompletionListener { playNext() }
+                prepare(); start()
+            }
+        } catch (e: Exception) {
+            playNext()
+        }
+    }
+
+    private fun onStreamFinished() {
+        streamDone = true
+        if (!playing && playQueue.isEmpty()) {
+            DebugLogger.log("SERVICE", "Playback finished. Listening again...")
+            handler.postDelayed({ startListening() }, 500)
         }
     }
 
@@ -115,46 +202,7 @@ class AssistantService : Service() {
         playAudio(file)
     }
 
-    // true = command mila aur chala, false = nahi mila
-    private fun checkAndExecuteCommand(text: String): Boolean {
-        val cmd = text.lowercase().trim()
-        if (cmd.isBlank()) return false
-
-        fun has(vararg w: String) = w.any { cmd.contains(it) }
-        fun strip(vararg w: String): String {
-            var r = cmd
-            w.forEach { r = r.replace(it, "") }
-            return r.trim()
-        }
-
-        when {
-            has("flashlight", "flash", "torch", "light", "फ्लैशलाइट", "फ्लैश", "फ़्लैश", "टॉर्च", "टार्च", "लाइट") -> {
-                actionExecutor.toggleFlashlight(!has("off", "बंद", "बन्द", "ऑफ", "बुझा"))
-            }
-            has("youtube", "यूट्यूब", "गाना", "play", "प्ले") -> {
-                val q = strip("youtube", "यूट्यूब", "play", "प्ले", "पर", "on", "चलाओ", "चला", "सुनाओ", "खोलो")
-                if (q.isBlank()) actionExecutor.openApp("youtube") else actionExecutor.playOnYoutube(q)
-            }
-            has("camera", "कैमरा") -> actionExecutor.openCamera()
-            has("call", "कॉल", "फोन", "फ़ोन") -> {
-                val name = strip("call", "कॉल", "फोन", "फ़ोन", "को", "करो", "कर", "लगाओ")
-                actionExecutor.callContact(name)
-            }
-            has("message", "मैसेज", "sms") -> {
-                val key = listOf("message", "मैसेज", "sms").first { cmd.contains(it) }
-                val name = cmd.substringBefore(key).replace("को", "").replace("to", "").trim()
-                val msg = cmd.substringAfter(key)
-                    .replace("भेजो", "").replace("send", "").replace("कि", "").trim()
-                if (name.isNotBlank() && msg.isNotBlank()) actionExecutor.sendSms(name, msg)
-            }
-            has("open", "खोलो", "खोल") -> {
-                actionExecutor.openApp(strip("open", "खोलो", "खोल", "ऐप", "app"))
-            }
-            else -> return false
-        }
-        return true
-    }
-
+    // Ek poori awaaz bajane ke liye (notification, tasks ka jawab)
     private fun playAudio(file: File) {
         try {
             mediaPlayer?.release()
@@ -187,6 +235,8 @@ class AssistantService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacksAndMessages(null)
+        try { callHandler.unregister() } catch (_: Exception) {}
+        try { speaker.shutdown() } catch (_: Exception) {}
         try { audioRecorder.stopRecording() } catch (_: Exception) {}
         try { mediaPlayer?.release() } catch (_: Exception) {}
     }
