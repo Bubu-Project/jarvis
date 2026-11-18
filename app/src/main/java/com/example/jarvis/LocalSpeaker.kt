@@ -8,7 +8,7 @@ import android.speech.tts.UtteranceProgressListener
 import java.util.Locale
 import java.util.UUID
 
-// Phone ki apni Hindi awaaz (server ke bina bhi chalti hai): commands ka jawab aur call ka elaan.
+// Phone ki apni Hindi awaaz (server ke bina bhi chalti hai): commands ka jawab, call aur message ka elaan.
 // Awaaz na aaye to: Settings > Language > Text-to-speech mein Google TTS ke liye Hindi voice download karo.
 class LocalSpeaker(context: Context) {
     private val handler = Handler(Looper.getMainLooper())
@@ -21,14 +21,19 @@ class LocalSpeaker(context: Context) {
             if (status == TextToSpeech.SUCCESS) {
                 val r = tts?.setLanguage(Locale("hi", "IN"))
                 ready = r != null && r >= TextToSpeech.LANG_AVAILABLE
+                DebugLogger.log("TTS", if (ready) "Hindi awaaz taiyar" else "Hindi awaaz NAHI mili (code=$r)")
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {}
                     override fun onDone(utteranceId: String?) { finish(utteranceId) }
                     override fun onError(utteranceId: String?) { finish(utteranceId) }
                 })
+            } else {
+                DebugLogger.log("TTS", "TextToSpeech shuru nahi hua (status=$status)")
             }
         }
     }
+
+    fun isReady(): Boolean = ready
 
     private fun finish(id: String?) {
         if (id == null) return
@@ -40,6 +45,7 @@ class LocalSpeaker(context: Context) {
     fun speak(text: String, onDone: () -> Unit = {}) {
         val t = tts
         if (t == null || !ready) {
+            DebugLogger.log("TTS", "Bol nahi paya (awaaz taiyar nahi): $text")
             handler.post { onDone() }
             return
         }
