@@ -1,6 +1,8 @@
 package com.example.jarvis
 
 import android.content.Context
+import android.media.AudioManager
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
@@ -11,6 +13,8 @@ import java.util.UUID
 // Phone ki apni Hindi awaaz (server ke bina bhi chalti hai): commands ka jawab, call aur message ka elaan.
 // Awaaz na aaye to: Settings > Language > Text-to-speech mein Google TTS ke liye Hindi voice download karo.
 class LocalSpeaker(context: Context) {
+    private val audioManager = context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private var savedAlarm: Int? = null
     private val handler = Handler(Looper.getMainLooper())
     private var tts: TextToSpeech? = null
     @Volatile private var ready = false
@@ -41,8 +45,15 @@ class LocalSpeaker(context: Context) {
         if (cb != null) handler.post { cb() }
     }
 
+    private fun restoreAlarm() {
+        val v = savedAlarm ?: return
+        try { audioManager.setStreamVolume(AudioManager.STREAM_ALARM, v, 0) } catch (_: Exception) {}
+        savedAlarm = null
+    }
+
     // bolna khatam hone par onDone chalta hai (awaaz na ho tab bhi turant chalta hai)
-    fun speak(text: String, onDone: () -> Unit = {}) {
+    // loud = true: ringtone ke upar bhi sunayi de, isliye alarm wali awaaz (tez) se bolta hai
+    fun speak(text: String, loud: Boolean = false, onDone: () -> Unit = {}) {
         val t = tts
         if (t == null || !ready) {
             DebugLogger.log("TTS", "Bol nahi paya (awaaz taiyar nahi): $text")
@@ -50,13 +61,28 @@ class LocalSpeaker(context: Context) {
             return
         }
         val id = UUID.randomUUID().toString()
-        synchronized(callbacks) { callbacks[id] = onDone }
-        val res = t.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
+        var params: Bundle? = null
+        if (loud) {
+            params = Bundle()
+            params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_ALARM)
+            try {
+                if (savedAlarm == null) savedAlarm = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
+                val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+                audioManager.setStreamVolume(AudioManager.STREAM_ALARM, maxOf(1, (max * 0.8).toInt()), 0)
+            } catch (_: Exception) {}
+        }
+        val done: () -> Unit = {
+            if (loud) restoreAlarm()
+            onDone()
+        }
+        synchronized(callbacks) { callbacks[id] = done }
+        val res = t.speak(text, TextToSpeech.QUEUE_FLUSH, params, id)
         if (res != TextToSpeech.SUCCESS) finish(id)
     }
 
     fun stop() {
         try { tts?.stop() } catch (_: Exception) {}
+        restoreAlarm()
     }
 
     fun shutdown() {
