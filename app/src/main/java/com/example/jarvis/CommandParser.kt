@@ -18,8 +18,8 @@ object CommandParser {
 
         Regex("^call\\s+(.+)").find(text)?.let { match ->
             val name = match.groupValues[1].trim()
-            val ok = executor.callContact(name)
-            speak(if (ok) "Calling $name" else "I couldn't find a contact named $name")
+            val result = executor.callContact(name)
+            speak(result)
             return true
         }
 
@@ -33,8 +33,8 @@ object CommandParser {
         Regex("^(message|text)\\s+(\\w+)\\s+(saying\\s+)?(.+)").find(text)?.let { match ->
             val name = match.groupValues[2].trim()
             val body = match.groupValues[4].trim()
-            val ok = executor.sendSms(name, body)
-            speak(if (ok) "Message sent to $name" else "I couldn't find a contact named $name")
+            val result = executor.sendSms(name, body)
+            speak(result)
             return true
         }
 
