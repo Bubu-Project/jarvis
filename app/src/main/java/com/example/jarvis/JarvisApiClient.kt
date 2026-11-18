@@ -23,6 +23,13 @@ class JarvisApiClient(private val context: Context) {
         .readTimeout(120, TimeUnit.SECONDS)
         .build()
 
+    // Chal rahi streaming ko beech mein rokne ke liye
+    @Volatile private var currentCall: Call? = null
+
+    fun cancelCurrent() {
+        try { currentCall?.cancel() } catch (_: Exception) {}
+    }
+
     private fun decode(raw: String): String =
         try { URLDecoder.decode(raw, "UTF-8") } catch (e: Exception) { raw }
 
@@ -48,7 +55,9 @@ class JarvisApiClient(private val context: Context) {
             .addHeader("ngrok-skip-browser-warning", "true")
             .build()
 
-        client.newCall(request).enqueue(object : Callback {
+        val call = client.newCall(request)
+        currentCall = call
+        call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 handler.post { onError(e.message ?: "Unknown") }
             }
