@@ -1,6 +1,9 @@
 package com.example.jarvis
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import android.bluetooth.BluetoothAdapter
 import android.content.Context
 import android.content.Intent
@@ -15,6 +18,29 @@ import android.provider.MediaStore
 import android.provider.Settings
 import android.telephony.SmsManager
 import java.util.Calendar
+
+// Do shabdon ki kitni milti-julti hai (0.0 se 1.0). Galat sune naam bhi pakadne ke kaam aata hai
+fun fuzzyRatio(a: String, b: String): Double {
+    if (a.isEmpty() && b.isEmpty()) return 1.0
+    val m = a.length
+    val n = b.length
+    if (m == 0 || n == 0) return 0.0
+    var prev = IntArray(n + 1) { it }
+    var cur = IntArray(n + 1)
+    for (i in 1..m) {
+        cur[0] = i
+        for (j in 1..n) {
+            val cost = if (a[i - 1] == b[j - 1]) 0 else 1
+            cur[j] = minOf(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+        }
+        val tmp = prev
+        prev = cur
+        cur = tmp
+    }
+    return 1.0 - prev[n].toDouble() / maxOf(m, n)
+}
+
+data class Contact(val name: String, val number: String)
 
 class ActionExecutor(private val context: Context) {
     private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -67,68 +93,102 @@ class ActionExecutor(private val context: Context) {
     }
 
     // ---------------- Contacts / Call / SMS ----------------
-    // Devanagari naam ko Latin mein badalke bhi dhundta hai (राहुल -> rahul)
-    private fun nameCandidates(name: String): List<String> {
-        val n = name.trim()
-        val out = LinkedHashSet<String>()
-        out.add(n)
-        CONTACT_ALIASES[n]?.let { out.add(it) }
-        if (Build.VERSION.SDK_INT >= 24) {
+    private fun hasPerm(p: String) =
+        ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
+
+    // Devanagari ko Latin mein badalta hai (राहुल -> rahula), taaki English contact se mile
+    private fun toLatin(s: String): String {
+        var t = s.trim().lowercase()
+        if (t.any { it.code in 0x0900..0x097F } && Build.VERSION.SDK_INT >= 24) {
             try {
-                val tr = android.icu.text.Transliterator.getInstance(
+                t = android.icu.text.Transliterator.getInstance(
                     "Devanagari-Latin; NFD; [:Nonspacing Mark:] Remove; NFC"
-                )
-                val latin = tr.transliterate(n).trim()
-                if (latin.isNotEmpty()) {
-                    out.add(latin)
-                    if (latin.endsWith("a") && latin.length > 3) out.add(latin.dropLast(1))
-                }
+                ).transliterate(t)
             } catch (_: Exception) {}
         }
-        return out.toList()
+        return t.filter { it.isLetter() || it == ' ' }.lowercase().trim()
     }
 
-    private fun findNumber(name: String): String? {
-        for (cand in nameCandidates(name)) {
-            try {
-                val uri = Uri.withAppendedPath(
-                    ContactsContract.CommonDataKinds.Phone.CONTENT_FILTER_URI, Uri.encode(cand)
-                )
-                val cursor = context.contentResolver.query(
-                    uri, arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER), null, null, null
-                )
-                cursor?.use {
-                    if (it.moveToFirst()) return it.getString(0)
+    private fun loadContacts(): List<Contact> {
+        val out = ArrayList<Contact>()
+        try {
+            context.contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                arrayOf(
+                    ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                    ContactsContract.CommonDataKinds.Phone.NUMBER
+                ),
+                null, null, null
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val n = c.getString(0) ?: continue
+                    val num = c.getString(1) ?: continue
+                    out.add(Contact(n, num))
                 }
-            } catch (_: Exception) {}
-        }
-        return null
+            }
+        } catch (_: Exception) {}
+        return out
     }
 
-    fun callContact(name: String): Boolean {
-        val number = findNumber(name) ?: return false
+    // Sabse milta-julta contact dhundta hai (thoda galat bola ho tab bhi)
+    fun findContact(query: String): Contact? {
+        val q = toLatin(CONTACT_ALIASES[query.trim()] ?: query)
+        if (q.isBlank()) return null
+        var best: Contact? = null
+        var bestScore = 0.0
+        for (c in loadContacts()) {
+            val cl = toLatin(c.name)
+            var score = fuzzyRatio(q, cl)
+            for (tk in cl.split(" ")) {
+                if (tk.isBlank()) continue
+                score = maxOf(score, fuzzyRatio(q, tk))
+                if (tk.startsWith(q) || (tk.length >= 3 && q.startsWith(tk))) score = maxOf(score, 0.9)
+            }
+            if (cl.contains(q)) score = maxOf(score, 0.95)
+            if (score > bestScore) {
+                bestScore = score
+                best = c
+            }
+        }
+        return if (bestScore >= 0.6) best else null
+    }
+
+    // Bolne layak nateeja lautata hai (kamyabi ya wajah)
+    fun callContact(query: String): String {
+        if (!hasPerm(Manifest.permission.READ_CONTACTS)) return "कॉन्टैक्ट पढ़ने की अनुमति नहीं है।"
+        if (!hasPerm(Manifest.permission.CALL_PHONE)) return "कॉल करने की अनुमति नहीं है।"
+        val c = findContact(query) ?: return "$query नाम का कॉन्टैक्ट नहीं मिला।"
         return try {
-            val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:$number"))
+            val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:${Uri.encode(c.number)}"))
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
-            true
-        } catch (_: Exception) { false }
+            "${c.name} को कॉल लगा रहा हूँ।"
+        } catch (e: Exception) {
+            "कॉल नहीं लग पाई।"
+        }
     }
 
-    fun sendSms(name: String, message: String): Boolean {
-        val number = findNumber(name) ?: return false
+    fun sendSms(query: String, message: String): String {
+        if (!hasPerm(Manifest.permission.READ_CONTACTS)) return "कॉन्टैक्ट पढ़ने की अनुमति नहीं है।"
+        if (!hasPerm(Manifest.permission.SEND_SMS)) return "मैसेज भेजने की अनुमति नहीं है। Jarvis Permissions खोलकर SMS की अनुमति दीजिए।"
+        val c = findContact(query) ?: return "$query नाम का कॉन्टैक्ट नहीं मिला।"
         return try {
-            val smsManager: SmsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val sms: SmsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 context.getSystemService(SmsManager::class.java)
             } else {
                 @Suppress("DEPRECATION")
                 SmsManager.getDefault()
             }
-            smsManager.sendTextMessage(number, null, message, null, null)
-            true
+            val parts = sms.divideMessage(message)
+            if (parts.size > 1) {
+                sms.sendMultipartTextMessage(c.number, null, parts, null, null)
+            } else {
+                sms.sendTextMessage(c.number, null, message, null, null)
+            }
+            "${c.name} को मैसेज भेज दिया।"
         } catch (e: Exception) {
-            e.printStackTrace()
-            false
+            DebugLogger.log("SMS", "Error: ${e.message}")
+            "मैसेज नहीं भेज पाया।"
         }
     }
 
@@ -146,8 +206,7 @@ class ActionExecutor(private val context: Context) {
 
     fun openApp(appName: String): Boolean {
         val pm = context.packageManager
-        val wanted = nameCandidates(appName).map { it.lowercase() } +
-            listOfNotNull(APP_ALIASES[appName.trim()])
+        val wanted = listOfNotNull(appName.lowercase().trim(), APP_ALIASES[appName.trim()], toLatin(appName))
         val apps = pm.getInstalledApplications(0)
         val match = apps.firstOrNull { info ->
             val label = pm.getApplicationLabel(info).toString().lowercase()
