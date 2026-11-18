@@ -1,10 +1,12 @@
 package com.example.jarvis
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
@@ -17,9 +19,10 @@ import androidx.core.content.ContextCompat
 import java.io.File
 
 // Phone aane par:
-//  1) Jarvis bolta hai "सर, <naam> का फ़ोन आ रहा है। उठाऊँ या काट दूँ?"
+//  1) Ringtone chup (vibrate), phir Jarvis bolta hai "सर, <naam> का फ़ोन आ रहा है। उठाऊँ या काट दूँ?"
 //  2) Tum bolte ho "उठाओ" ya "काट दो"
 //  3) Jarvis call uthata / kaat deta hai (bina phone chhue)
+//  4) Call na uthe to "फ़ोन छूट गया" bhi batata hai
 // Zaroori permissions: READ_PHONE_STATE, READ_CALL_LOG, READ_CONTACTS, ANSWER_PHONE_CALLS, RECORD_AUDIO
 class PhoneCallHandler(
     private val context: Context,
@@ -33,15 +36,19 @@ class PhoneCallHandler(
     private var ringing = false
     private var inCall = false
     private var announced = false
+    private var handledByUs = false
     private var lastNumber: String? = null
+    private var lastName: String? = null
     private var announceTask: Runnable? = null
     private var registered = false
+    private var savedRinger: Int? = null
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context?, intent: Intent?) {
             val state = intent?.getStringExtra(TelephonyManager.EXTRA_STATE) ?: return
             @Suppress("DEPRECATION")
             val number = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
+            DebugLogger.log("CALL", "Phone state: $state")
             when (state) {
                 TelephonyManager.EXTRA_STATE_RINGING -> onRinging(number)
                 TelephonyManager.EXTRA_STATE_OFFHOOK -> onOffhook()
@@ -55,6 +62,9 @@ class PhoneCallHandler(
         val filter = IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED)
         ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_EXPORTED)
         registered = true
+        val perm = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) ==
+            PackageManager.PERMISSION_GRANTED
+        DebugLogger.log("CALL", "Call sunne wala chalu. READ_PHONE_STATE=" + if (perm) "OK" else "NAHI (call ka elaan nahi hoga)")
     }
 
     fun unregister() {
@@ -62,11 +72,33 @@ class PhoneCallHandler(
         try { context.unregisterReceiver(receiver) } catch (_: Exception) {}
         registered = false
         cancelAnnounce()
+        restoreRinger()
     }
 
     private fun cancelAnnounce() {
         announceTask?.let { handler.removeCallbacks(it) }
         announceTask = null
+    }
+
+    // Ringtone ki jagah sirf vibrate, taaki Jarvis ki awaaz saaf sunayi de
+    private fun silenceRinger() {
+        try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            if (savedRinger == null) savedRinger = am.ringerMode
+            am.ringerMode = AudioManager.RINGER_MODE_VIBRATE
+            DebugLogger.log("CALL", "Ringtone chup kar di")
+        } catch (e: Exception) {
+            DebugLogger.log("CALL", "Ringtone chup nahi hui (Do Not Disturb access dijiye): ${e.message}")
+        }
+    }
+
+    private fun restoreRinger() {
+        val saved = savedRinger ?: return
+        try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            am.ringerMode = saved
+        } catch (_: Exception) {}
+        savedRinger = null
     }
 
     private fun onRinging(number: String?) {
@@ -75,7 +107,9 @@ class PhoneCallHandler(
         if (!ringing) {
             ringing = true
             announced = false
+            handledByUs = false
             DebugLogger.log("CALL", "Phone aa raha hai")
+            silenceRinger()
             onCallStarted()
         }
         // Number wala doosra broadcast aane ke liye thoda ruko
@@ -85,7 +119,7 @@ class PhoneCallHandler(
                 announce()
             }
             announceTask = task
-            handler.postDelayed(task, 1200)
+            handler.postDelayed(task, 900)
         }
     }
 
@@ -93,6 +127,7 @@ class PhoneCallHandler(
         cancelAnnounce()
         ringing = false
         inCall = true
+        restoreRinger()
         try { audioRecorder.stopRecording() } catch (_: Exception) {}
         speaker.stop()
         onCallStarted()
@@ -100,15 +135,26 @@ class PhoneCallHandler(
 
     private fun onIdle() {
         if (!ringing && !inCall && !announced) return
+        val missed = ringing && !inCall && !handledByUs
+        val who = lastName ?: lastNumber
         cancelAnnounce()
         ringing = false
         inCall = false
         announced = false
+        handledByUs = false
         lastNumber = null
+        lastName = null
         try { audioRecorder.stopRecording() } catch (_: Exception) {}
         speaker.stop()
+        restoreRinger()
         DebugLogger.log("CALL", "Call khatam")
-        handler.postDelayed({ onCallEnded() }, 1500)
+        if (missed && !who.isNullOrBlank()) {
+            handler.postDelayed({
+                speaker.speak("सर, $who का फ़ोन छूट गया।") { onCallEnded() }
+            }, 700)
+        } else {
+            handler.postDelayed({ onCallEnded() }, 1500)
+        }
     }
 
     private fun announce() {
@@ -116,6 +162,7 @@ class PhoneCallHandler(
         announced = true
         val num = lastNumber
         val name = if (!num.isNullOrBlank()) lookupName(num) else null
+        lastName = name
         val say = when {
             name != null -> "सर, $name का फ़ोन आ रहा है। उठाऊँ या काट दूँ?"
             !num.isNullOrBlank() -> "सर, एक अनजान नंबर से फ़ोन आ रहा है। उठाऊँ या काट दूँ?"
@@ -140,13 +187,14 @@ class PhoneCallHandler(
         if (!ringing || attempt > 3) return
         val f = File(context.cacheDir, "call_decision.wav")
         audioRecorder.startRecording(f) {
-            if (!ringing) return@startRecording
-            if (f.length() < 2000) {
-                listenForDecision(attempt + 1)
-                return@startRecording
-            }
-            apiClient.transcribe(f) { text ->
-                if (ringing) handleDecision(text ?: "", attempt)
+            if (ringing) {
+                if (f.length() < 2000) {
+                    listenForDecision(attempt + 1)
+                } else {
+                    apiClient.transcribe(f) { text ->
+                        if (ringing) handleDecision(text ?: "", attempt)
+                    }
+                }
             }
         }
     }
@@ -165,6 +213,7 @@ class PhoneCallHandler(
 
     @SuppressLint("MissingPermission")
     private fun acceptCall() {
+        handledByUs = true
         try {
             val tm = context.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -186,6 +235,7 @@ class PhoneCallHandler(
 
     @SuppressLint("MissingPermission")
     private fun rejectCall() {
+        handledByUs = true
         try {
             val tm = context.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
