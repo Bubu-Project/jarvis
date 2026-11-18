@@ -42,6 +42,7 @@ class PhoneCallHandler(
     private var announceTask: Runnable? = null
     private var registered = false
     private var savedRinger: Int? = null
+    private var savedRingVol: Int? = null
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context?, intent: Intent?) {
@@ -80,25 +81,32 @@ class PhoneCallHandler(
         announceTask = null
     }
 
-    // Ringtone ki jagah sirf vibrate, taaki Jarvis ki awaaz saaf sunayi de
+    // Ringtone ki jagah sirf vibrate. Na ho paye to ringtone ki awaaz bilkul kam kar deta hai
     private fun silenceRinger() {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        if (savedRinger == null) savedRinger = am.ringerMode
         try {
-            val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            if (savedRinger == null) savedRinger = am.ringerMode
             am.ringerMode = AudioManager.RINGER_MODE_VIBRATE
-            DebugLogger.log("CALL", "Ringtone chup kar di")
+            DebugLogger.log("CALL", "Ringtone chup kar di (vibrate)")
+            return
+        } catch (e: Exception) {
+            DebugLogger.log("CALL", "Vibrate mode nahi laga: ${e.message}")
+        }
+        try {
+            if (savedRingVol == null) savedRingVol = am.getStreamVolume(AudioManager.STREAM_RING)
+            am.setStreamVolume(AudioManager.STREAM_RING, 1, 0)
+            DebugLogger.log("CALL", "Ringtone ki awaaz minimum kar di")
         } catch (e: Exception) {
             DebugLogger.log("CALL", "Ringtone chup nahi hui (Do Not Disturb access dijiye): ${e.message}")
         }
     }
 
     private fun restoreRinger() {
-        val saved = savedRinger ?: return
-        try {
-            val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            am.ringerMode = saved
-        } catch (_: Exception) {}
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        savedRinger?.let { try { am.ringerMode = it } catch (_: Exception) {} }
+        savedRingVol?.let { try { am.setStreamVolume(AudioManager.STREAM_RING, it, 0) } catch (_: Exception) {} }
         savedRinger = null
+        savedRingVol = null
     }
 
     private fun onRinging(number: String?) {
@@ -108,7 +116,10 @@ class PhoneCallHandler(
             ringing = true
             announced = false
             handledByUs = false
-            DebugLogger.log("CALL", "Phone aa raha hai")
+            val logPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALL_LOG) ==
+                PackageManager.PERMISSION_GRANTED
+            DebugLogger.log("CALL", "Phone aa raha hai. number=" + (number ?: "NAHI MILA") +
+                (if (logPerm) "" else " (READ_CALL_LOG permission nahi, isliye naam nahi milega)"))
             silenceRinger()
             onCallStarted()
         }
@@ -169,7 +180,7 @@ class PhoneCallHandler(
             else -> "सर, फ़ोन आ रहा है। उठाऊँ या काट दूँ?"
         }
         DebugLogger.log("CALL", say)
-        speaker.speak(say) { listenForDecision(0) }
+        speaker.speak(say, loud = true) { listenForDecision(0) }
     }
 
     private fun lookupName(number: String): String? {
