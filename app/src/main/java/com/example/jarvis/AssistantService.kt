@@ -1,41 +1,55 @@
 package com.example.jarvis
 
+import android.Manifest
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import java.io.File
 
 class AssistantService : Service() {
     private lateinit var apiClient: JarvisApiClient
     private lateinit var actionExecutor: ActionExecutor
+    private lateinit var systemActions: SystemActions
     private lateinit var commandRouter: CommandRouter
     private lateinit var audioRecorder: AudioRecorderHelper
     private lateinit var speaker: LocalSpeaker
     private lateinit var callHandler: PhoneCallHandler
+    private lateinit var bargeIn: BargeInMonitor
     private var mediaPlayer: MediaPlayer? = null
     private var audioFile: File? = null
     private val handler = Handler(Looper.getMainLooper())
 
-    // busy = server ko bhej rahe hain ya Jarvis bol raha hai (tab notification poll nahi hoti)
+    // busy = server ko bhej rahe hain ya Jarvis bol raha hai
     @Volatile private var busy = false
     private var recording = false
     private var suppressNext = false
     private var pendingNotif: File? = null
 
-    // callMode = phone ring ho raha hai ya call chal rahi hai: tab Jarvis normal sunna band rakhta hai
+    // callMode = phone ring ho raha hai ya call chal rahi hai: tab normal sunna band
     @Volatile private var callMode = false
+
+    // Har naye sawaal par badhta hai. Beech mein roke jaane par purane jawab ke callback bekaar ho jate hain
+    @Volatile private var gen = 0
 
     // Streaming: vaakya ke tukde queue mein aate hain aur ek ke baad ek bajte hain
     private val playQueue = java.util.ArrayDeque<File>()
     private var playing = false
     private var streamDone = true
     private var streamLogged = false
+    private var bargeActive = false
+
+    // Message / task ki khabar jo bolni baaki hai
+    private val pendingSpeech = java.util.ArrayDeque<String>()
 
     // Har 4 second mein server se poochta hai: koi agent ka kaam pura hua?
     private val poller = object : Runnable {
@@ -58,9 +72,11 @@ class AssistantService : Service() {
         super.onCreate()
         apiClient = JarvisApiClient(this)
         actionExecutor = ActionExecutor(this)
-        commandRouter = CommandRouter(actionExecutor)
+        systemActions = SystemActions(this)
+        commandRouter = CommandRouter(actionExecutor, systemActions)
         audioRecorder = AudioRecorderHelper()
         speaker = LocalSpeaker(this)
+        bargeIn = BargeInMonitor()
         callHandler = PhoneCallHandler(
             context = this,
             audioRecorder = audioRecorder,
@@ -69,6 +85,10 @@ class AssistantService : Service() {
             onCallStarted = {
                 callMode = true
                 busy = true
+                gen++
+                apiClient.cancelCurrent()
+                bargeIn.stop()
+                bargeActive = false
                 if (recording) {
                     suppressNext = true
                     audioRecorder.stopRecording()
@@ -80,35 +100,103 @@ class AssistantService : Service() {
             }
         )
         callHandler.register()
+
+        // WhatsApp / SMS ka message aane par bolo
+        JarvisEvents.onMessage = { app, who, text ->
+            handler.post {
+                val clipped = if (text.length > 160) text.take(160) else text
+                announceLocal("सर, $who का $app आया है। $clipped")
+            }
+        }
+
         createNotification()
         startListening()
         handler.postDelayed(poller, 4000)
+        handler.postDelayed({ reportPermissions() }, 3000)
+    }
+
+    // Debug box mein dikhata hai kaun si permission baaki hai (kuch na chale to sabse pehle ye dekho)
+    private fun reportPermissions() {
+        fun ok(p: String) =
+            ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED
+        val items = listOf(
+            "Mic" to Manifest.permission.RECORD_AUDIO,
+            "Phone-state" to Manifest.permission.READ_PHONE_STATE,
+            "Call-log" to Manifest.permission.READ_CALL_LOG,
+            "Contacts" to Manifest.permission.READ_CONTACTS,
+            "Call-uthana" to Manifest.permission.ANSWER_PHONE_CALLS,
+            "Call-karna" to Manifest.permission.CALL_PHONE,
+            "SMS" to Manifest.permission.SEND_SMS
+        )
+        items.forEach { (name, perm) ->
+            DebugLogger.log("PERM", "$name: " + if (ok(perm)) "OK" else "NAHI MILI")
+        }
+        try {
+            val nm = getSystemService(NotificationManager::class.java)
+            DebugLogger.log("PERM", "DoNotDisturb access: " + if (nm.isNotificationPolicyAccessGranted) "OK" else "NAHI")
+            val listeners = NotificationManagerCompat.getEnabledListenerPackages(this)
+            DebugLogger.log("PERM", "Notification access: " + if (listeners.contains(packageName)) "OK" else "NAHI")
+            DebugLogger.log("PERM", "Modify settings: " + if (Settings.System.canWrite(this)) "OK" else "NAHI")
+        } catch (_: Exception) {}
+        DebugLogger.log("PERM", "Hindi awaaz: " + if (speaker.isReady()) "OK" else "NAHI")
     }
 
     private fun startListening() {
         if (callMode) return   // call ke dauran normal sunna band
+        bargeIn.stop()
+        bargeActive = false
         busy = false
         playQueue.clear()
         playing = false
         streamDone = true
+
+        if (pendingSpeech.isNotEmpty()) {
+            busy = true
+            drainSpeech()
+            return
+        }
         pendingNotif?.let { n ->
             pendingNotif = null
             playNotification(n)
             return
         }
+
         audioFile = File(cacheDir, "input_audio.wav")
         DebugLogger.log("SERVICE", "Listening... Speak now")
         recording = true
         audioRecorder.startRecording(audioFile!!) {
             recording = false
             if (suppressNext) {
-                // notification / call ke liye recording rok di gayi thi
+                // notification / call / message ke liye recording rok di gayi thi
                 suppressNext = false
             } else {
                 DebugLogger.log("SERVICE", "Silence detected. Sending to API...")
                 sendToApi()
             }
         }
+    }
+
+    // Phone khud bolta hai (message, missed call jaisi khabar). Jarvis busy ho to baad mein bolega
+    private fun announceLocal(text: String) {
+        pendingSpeech.addLast(text)
+        if (!busy && !callMode) {
+            if (recording) {
+                suppressNext = true
+                audioRecorder.stopRecording()
+            }
+            busy = true
+            drainSpeech()
+        }
+    }
+
+    private fun drainSpeech() {
+        if (callMode) return
+        val s = pendingSpeech.pollFirst()
+        if (s == null) {
+            startListening()
+            return
+        }
+        speaker.speak(s) { drainSpeech() }
     }
 
     private fun sendToApi() {
@@ -120,46 +208,75 @@ class AssistantService : Service() {
             playing = false
             streamDone = false
             streamLogged = false
+            val myGen = ++gen
             apiClient.sendAudio(file,
                 onResponse = { replyAudio, userText, action ->
-                    DebugLogger.log("SERVICE", "User said: $userText")
-                    if (action != "none") {
-                        // Server ne phone command bataya: app khud chalayega
-                        val say = commandRouter.execute(userText)
-                        when {
-                            say == null -> playAudio(replyAudio)          // samajh nahi aaya: server ka "ठीक है।"
-                            say.isBlank() -> handler.postDelayed({ startListening() }, 1500)
-                            else -> speaker.speak(say) { startListening() }
+                    if (myGen == gen) {
+                        DebugLogger.log("SERVICE", "User said: $userText")
+                        if (action != "none") {
+                            // Phone command: app khud turant chalata hai
+                            val say = commandRouter.execute(userText)
+                            when {
+                                say == null -> {
+                                    DebugLogger.log("SERVICE", "Command samajh nahi aaya")
+                                    handler.postDelayed({ startListening() }, 500)
+                                }
+                                say.isBlank() -> handler.postDelayed({ startListening() }, 500)
+                                else -> speaker.speak(say) { startListening() }
+                            }
+                        } else {
+                            playAudio(replyAudio)
                         }
-                    } else {
-                        playAudio(replyAudio)
                     }
                 },
                 onStreamChunk = { chunk, userText ->
-                    if (!streamLogged) {
-                        streamLogged = true
-                        DebugLogger.log("SERVICE", "User said: $userText")
-                        DebugLogger.log("SERVICE", "Jarvis bolna shuru (streaming)")
+                    if (myGen == gen) {
+                        if (!streamLogged) {
+                            streamLogged = true
+                            DebugLogger.log("SERVICE", "User said: $userText")
+                            DebugLogger.log("SERVICE", "Jarvis bolna shuru (streaming)")
+                        }
+                        enqueueChunk(chunk)
                     }
-                    enqueueChunk(chunk)
                 },
-                onStreamEnd = { onStreamFinished() },
+                onStreamEnd = {
+                    if (myGen == gen) onStreamFinished()
+                },
                 onError = { error ->
-                    if (error == "IGNORED") {
-                        DebugLogger.log("SERVICE", "Jarvis so raha hai (wake word nahi bola)")
-                    } else {
-                        DebugLogger.log("SERVICE", "API Error: $error")
+                    if (myGen == gen) {
+                        if (error == "IGNORED") {
+                            DebugLogger.log("SERVICE", "Jarvis so raha hai (wake word nahi bola)")
+                        } else {
+                            DebugLogger.log("SERVICE", "API Error: $error")
+                        }
+                        startListening()
                     }
-                    startListening()
                 }
             )
         }
+    }
+
+    // Tum beech mein bolo to Jarvis turant chup ho jata hai aur sunne lagta hai
+    private fun interruptSpeech() {
+        DebugLogger.log("SERVICE", "Beech mein roka gaya: Jarvis chup")
+        gen++
+        apiClient.cancelCurrent()
+        try { mediaPlayer?.stop() } catch (_: Exception) {}
+        playQueue.clear()
+        playing = false
+        streamDone = true
+        speaker.stop()
+        startListening()
     }
 
     // ---------- Streaming playback ----------
     private fun enqueueChunk(f: File) {
         if (callMode) return
         playQueue.addLast(f)
+        if (!bargeActive) {
+            bargeActive = true
+            bargeIn.start { interruptSpeech() }
+        }
         if (!playing) playNext()
     }
 
@@ -202,7 +319,7 @@ class AssistantService : Service() {
         playAudio(file)
     }
 
-    // Ek poori awaaz bajane ke liye (notification, tasks ka jawab)
+    // Ek poori awaaz bajane ke liye (task ka jawab, notification)
     private fun playAudio(file: File) {
         try {
             mediaPlayer?.release()
@@ -235,7 +352,9 @@ class AssistantService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacksAndMessages(null)
+        JarvisEvents.onMessage = null
         try { callHandler.unregister() } catch (_: Exception) {}
+        try { bargeIn.stop() } catch (_: Exception) {}
         try { speaker.shutdown() } catch (_: Exception) {}
         try { audioRecorder.stopRecording() } catch (_: Exception) {}
         try { mediaPlayer?.release() } catch (_: Exception) {}
