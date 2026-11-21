@@ -16,4 +16,4 @@ Jarvis is a fully autonomous AI Voice Assistant built from scratch. Developed by
 - **APIs:** GitHub API, Edge-TTS
 
 ## 🎥 Demo Video
-[Yahan apna LinkedIn post ka link ya YouTube link daal dena]
+LinkedIn-https://lnkd.in/p/dwjCaqdX
