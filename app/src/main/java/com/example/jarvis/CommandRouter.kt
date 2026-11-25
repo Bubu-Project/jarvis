@@ -19,6 +19,29 @@ class CommandRouter(private val ex: ActionExecutor, private val sys: SystemActio
         .replace("\u094C", "\u094B")
         .replace("\u0945", "\u0947")
 
+    // Sirf wahi seedhe commands jinme naam / number / text nahi chahiye. Ye phone par hi turant chalte hain
+    fun isSimple(text: String): Boolean {
+        val cmd = text.lowercase().trim()
+        val n = norm(cmd)
+        val toks = n.split(" ", ",", "।", "?", "!").filter { it.isNotBlank() }
+        fun has(vararg w: String): Boolean = w.any { kw ->
+            val k = norm(kw)
+            n.contains(k) || (
+                k.length >= 4 && k.any { it.code > 127 } &&
+                    toks.any { tk -> Math.abs(tk.length - k.length) <= 2 && fuzzyRatio(tk, k) >= 0.74 }
+                )
+        }
+        return has("torch", "flash", "फ्लैशलाइट", "फ्लैश", "फ़्लैश", "टॉर्च", "टार्च", "लाइट") ||
+            has("कैमरा", "camera") ||
+            has("बैटरी", "battery") ||
+            has("कितने बजे", "कितना बजा", "समय क्या", "टाइम क्या", "तारीख", "तारिख") ||
+            (has("आवाज", "volume", "वॉल्यूम", "साउंड") &&
+                has("बढ़ा", "बढा", "ज्यादा", "तेज", "फुल", "कम", "घटा", "धीमा", "धीरे", "म्यूट", "बंद")) ||
+            has("अगला गाना", "पिछला गाना", "गाना रोको", "गाना बंद") ||
+            has("ब्लूटूथ", "bluetooth", "वाईफाई", "वाई-फाई", "wifi") ||
+            has("ब्राइटनेस", "brightness")
+    }
+
     fun execute(text: String): String? {
         val cmd = text.lowercase().trim()
         if (cmd.isBlank()) return null
@@ -90,13 +113,13 @@ class CommandRouter(private val ex: ActionExecutor, private val sys: SystemActio
                 when {
                     name.isBlank() -> "किसे मैसेज भेजना है? ऐसे बोलिए: राहुल को मैसेज भेजो कि मैं आ रहा हूँ।"
                     msg.isBlank() -> "$name को क्या मैसेज भेजना है?"
-                    else -> ex.sendSms(name, msg)
+                    else -> ex.sendSmsSpeak(name, msg)
                 }
             }
 
             has("call", "कॉल", "फोन", "फ़ोन") -> {
                 val name = dropWords("call", "कॉल", "फोन", "फ़ोन", "को", "करो", "कर", "लगाओ", "लगा", "दो", "से", "बात")
-                if (name.isBlank()) "किसे कॉल करना है?" else ex.callContact(name)
+                if (name.isBlank()) "किसे कॉल करना है?" else ex.callContactSpeak(name)
             }
 
             // Music ke buttons: "गाना" wale YouTube branch se pehle
