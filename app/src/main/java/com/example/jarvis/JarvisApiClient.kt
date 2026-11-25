@@ -42,7 +42,9 @@ class JarvisApiClient(private val context: Context) {
         onResponse: (File, String, String) -> Unit,
         onStreamChunk: (File, String) -> Unit,
         onStreamEnd: () -> Unit,
-        onError: (String) -> Unit
+        onError: (String) -> Unit,
+        awake: Boolean = false,
+        onSleep: () -> Unit = {}
     ) {
         val requestBody = audioFile.asRequestBody("audio/wav".toMediaTypeOrNull())
         val multipartBody = MultipartBody.Builder()
@@ -53,6 +55,7 @@ class JarvisApiClient(private val context: Context) {
             .url("$BASE_URL/chat_voice")
             .post(multipartBody)
             .addHeader("ngrok-skip-browser-warning", "true")
+            .addHeader("X-Awake", if (awake) "1" else "0")
             .build()
 
         val call = client.newCall(request)
@@ -76,6 +79,7 @@ class JarvisApiClient(private val context: Context) {
 
                     val userText = decode(response.header("X-User-Text") ?: "")
                     val isStream = response.header("Content-Type")?.contains("x-jarvis-stream") == true
+                    if (response.header("X-Sleep") == "1") handler.post { onSleep() }
 
                     if (isStream) {
                         // Har vaakya: [4 byte lambai][mp3]. Lambai 0 = khatam
