@@ -14,8 +14,11 @@ import java.net.URLDecoder
 import java.util.concurrent.TimeUnit
 
 class JarvisApiClient(private val context: Context) {
-    // ⚠️ Kaggle restart par ye URL badal jata hai. Sirf yahi badlo (end mein /chat_voice mat likhna)
-    private val BASE_URL = "https://footwork-upscale-oxidant.ngrok-free.dev"
+    // Server URL ab app ke SERVER button se badalta hai. Kuch save na ho to ye default chalta hai
+    private val DEFAULT_URL = "https://footwork-upscale-oxidant.ngrok-free.dev"
+    private val BASE_URL: String
+        get() = context.getSharedPreferences("jarvis", Context.MODE_PRIVATE)
+            .getString("base_url", null)?.takeIf { it.isNotBlank() } ?: DEFAULT_URL
 
     private val handler = Handler(Looper.getMainLooper())
     private val client = OkHttpClient.Builder()
