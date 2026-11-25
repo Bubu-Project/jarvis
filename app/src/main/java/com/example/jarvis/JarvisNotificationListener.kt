@@ -5,6 +5,9 @@ import android.app.Notification
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 
+// App aur service ke beech sandesh
+// JarvisEvents object alag JarvisEvents.kt file mein hai.
+
 class JarvisNotificationListener : NotificationListenerService() {
 
     private val recent = HashMap<String, Long>()
@@ -36,10 +39,14 @@ class JarvisNotificationListener : NotificationListenerService() {
         if (!isMsg) return
 
         val extras = n.extras ?: return
-        val title =
-            extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: return
-        val text =
-            extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
+
+        val title = extras
+            .getCharSequence(Notification.EXTRA_TITLE)
+            ?.toString() ?: return
+
+        val text = extras
+            .getCharSequence(Notification.EXTRA_TEXT)
+            ?.toString() ?: ""
 
         val app = try {
             packageManager.getApplicationLabel(
@@ -49,17 +56,22 @@ class JarvisNotificationListener : NotificationListenerService() {
             "मैसेज"
         }
 
-        if (text.isBlank() || title.equals(app, ignoreCase = true)) return
+        if (text.isBlank() || title.equals(app, ignoreCase = true)) {
+            return
+        }
 
         val key = "$pkg|$title|$text"
         val now = System.currentTimeMillis()
 
         val last = recent[key]
+
         if (last != null && now - last < 8000) return
 
         recent[key] = now
 
-        if (recent.size > 50) recent.clear()
+        if (recent.size > 50) {
+            recent.clear()
+        }
 
         JarvisEvents.onMessage?.invoke(app, title, text)
     }
