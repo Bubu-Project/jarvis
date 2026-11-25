@@ -25,6 +25,8 @@ class AssistantService : Service() {
     private lateinit var speaker: LocalSpeaker
     private lateinit var callHandler: PhoneCallHandler
     private lateinit var bargeIn: BargeInMonitor
+    private lateinit var localRecognizer: LocalRecognizer
+    private var lastInteraction = 0L
     private var mediaPlayer: MediaPlayer? = null
     private var audioFile: File? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -77,6 +79,8 @@ class AssistantService : Service() {
         audioRecorder = AudioRecorderHelper()
         speaker = LocalSpeaker(this)
         bargeIn = BargeInMonitor()
+        localRecognizer = LocalRecognizer(this)
+        localRecognizer.prepare()
         callHandler = PhoneCallHandler(
             context = this,
             audioRecorder = audioRecorder,
@@ -209,10 +213,26 @@ class AssistantService : Service() {
             streamDone = false
             streamLogged = false
             val myGen = ++gen
+            if (localRecognizer.isReady()) {
+                // Pehle phone khud sunta hai: seedha command ho to turant chalta hai, server ko jata hi nahi
+                localRecognizer.recognize(file) { text ->
+                    if (myGen == gen) {
+                        DebugLogger.log("LOCAL", "Phone ne suna: $text")
+                        if (!tryLocalCommand(text)) callServer(file, myGen)
+                    }
+                }
+            } else {
+                callServer(file, myGen)
+            }
+        }
+    }
+
+    private fun callServer(file: File, myGen: Int) {
+        run {
             apiClient.sendAudio(file,
                 onResponse = { replyAudio, userText, action ->
                     if (myGen == gen) {
-                        DebugLogger.log("SERVICE", "User said: $userText")
+                        lastInteraction = System.currentTimeMillis(); DebugLogger.log("SERVICE", "User said: $userText")
                         if (action != "none") {
                             // Phone command: app khud turant chalata hai
                             val say = commandRouter.execute(userText)
@@ -233,7 +253,7 @@ class AssistantService : Service() {
                     if (myGen == gen) {
                         if (!streamLogged) {
                             streamLogged = true
-                            DebugLogger.log("SERVICE", "User said: $userText")
+                            lastInteraction = System.currentTimeMillis(); DebugLogger.log("SERVICE", "User said: $userText")
                             DebugLogger.log("SERVICE", "Jarvis bolna shuru (streaming)")
                         }
                         enqueueChunk(chunk)
@@ -251,9 +271,59 @@ class AssistantService : Service() {
                         }
                         startListening()
                     }
-                }
+                },
+                awake = isAwakeLocal(),
+                onSleep = { lastInteraction = 0L }
             )
         }
+    }
+
+    private fun isAwakeLocal() = System.currentTimeMillis() - lastInteraction < 120_000L
+
+    private val wakeWords = listOf("जार्विस", "जारविस", "जार्विश", "जर्विस", "jarvis")
+
+    private fun isWakeToken(tok: String): Boolean {
+        val t = tok.trim(',', '.', '।', '!', '?').lowercase()
+        if (t.length < 4) return false
+        val first = t[0]
+        val last = t[t.length - 1]
+        if (first != 'ज' && first != 'j') return false
+        if (last != 'स' && last != 'श' && last != 's' && last != 'h') return false
+        return wakeWords.any { fuzzyRatio(t, it) >= 0.55 }
+    }
+
+    // ("जार्विस" mila ya nahi, baaki text). Offline sunne wala kabhi "जार विस" do tukde kar deta hai, wo bhi pakadta hai
+    private fun splitWake(text: String): Pair<Boolean, String> {
+        val toks = text.trim().split(" ").filter { it.isNotBlank() }
+        val n = toks.size
+        val allowed = ((0 until minOf(3, n)) + (maxOf(0, n - 2) until n)).toSortedSet()
+        for (i in allowed) {
+            if (isWakeToken(toks[i])) {
+                return Pair(true, (toks.take(i) + toks.drop(i + 1)).joinToString(" "))
+            }
+            if (i + 1 < n && isWakeToken(toks[i] + toks[i + 1])) {
+                return Pair(true, (toks.take(i) + toks.drop(i + 2)).joinToString(" "))
+            }
+        }
+        return Pair(false, text.trim())
+    }
+
+    // true = command phone par hi chal gaya, server ki zaroorat nahi
+    private fun tryLocalCommand(text: String): Boolean {
+        val raw = text.trim()
+        if (raw.isBlank() || raw.split(" ").size > 8) return false
+        val (woke, cleaned) = splitWake(raw)
+        if (!woke && !isAwakeLocal()) return false
+        if (cleaned.isBlank() || !commandRouter.isSimple(cleaned)) return false
+        val say = commandRouter.execute(cleaned) ?: return false
+        lastInteraction = System.currentTimeMillis()
+        DebugLogger.log("SERVICE", "Turant (phone par hi): $cleaned")
+        if (say.isBlank()) {
+            handler.postDelayed({ startListening() }, 400)
+        } else {
+            speaker.speak(say) { startListening() }
+        }
+        return true
     }
 
     // Tum beech mein bolo to Jarvis turant chup ho jata hai aur sunne lagta hai
