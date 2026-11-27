@@ -3,6 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.example.jarvis">
 
+    <!-- ===== Tumhari purani permissions ===== -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
@@ -21,6 +22,7 @@
     <uses-permission android:name="android.permission.SET_ALARM" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
+    <!-- ===== Nayi permissions ===== -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
@@ -55,6 +57,7 @@
             </intent-filter>
         </activity>
 
+        <!-- Alag icon "Jarvis Permissions": ek jagah se saari permissions -->
         <activity
             android:name="com.example.jarvis.PermissionsActivity"
             android:exported="true"
@@ -70,6 +73,7 @@
             android:foregroundServiceType="microphone"
             android:exported="false" />
 
+        <!-- WhatsApp / SMS ka message Jarvis bole (Notification access dena padta hai) -->
         <service
             android:name="com.example.jarvis.JarvisNotificationListener"
             android:exported="true"
@@ -79,6 +83,29 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+
+        <!-- Purana CallReceiver yahan se hata diya: naya PhoneCallHandler call khud sambhalta hai.
+             Dono rakhte to Jarvis do baar bolta. -->
+
+        <!-- Voice se unlock (screen jalana, swipe hatana) -->
+        <activity
+            android:name="com.example.jarvis.UnlockActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- Voice se lock: sirf screen lock karne ki anumati -->
+        <receiver
+            android:name="com.example.jarvis.JarvisAdminReceiver"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
 
     </application>
 
