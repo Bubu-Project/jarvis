@@ -98,6 +98,7 @@ class AssistantService : Service() {
             context = this,
             audioRecorder = audioRecorder,
             apiClient = apiClient,
+            localRecognizer = localRecognizer,
             speaker = speaker,
 
             onCallStarted = {
