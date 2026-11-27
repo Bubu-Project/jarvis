@@ -1,12 +1,15 @@
 package com.example.jarvis
 
 import android.app.NotificationManager
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.media.AudioManager
 import android.net.Uri
 import android.os.BatteryManager
+import android.os.PowerManager
 import android.provider.Settings
 import android.view.KeyEvent
 import java.text.SimpleDateFormat
@@ -107,5 +110,42 @@ class SystemActions(private val context: Context) {
             else NotificationManager.INTERRUPTION_FILTER_ALL
         )
         return if (on) "डू नॉट डिस्टर्ब चालू कर दिया।" else "डू नॉट डिस्टर्ब बंद कर दिया।"
+    }
+
+    // ---------------- Phone lock / unlock ----------------
+    // Lock ke liye Device admin chahiye (Jarvis Permissions ka button 7)
+    fun lockScreen(): String {
+        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val admin = ComponentName(context, JarvisAdminReceiver::class.java)
+        if (!dpm.isAdminActive(admin)) {
+            return "फ़ोन लॉक करने के लिए Jarvis Permissions में Device admin दीजिए।"
+        }
+        return try {
+            dpm.lockNow()
+            ""
+        } catch (e: Exception) {
+            "फ़ोन लॉक नहीं हो पाया।"
+        }
+    }
+
+    // Unlock: screen jalata hai aur swipe wala lock hatata hai.
+    // PIN ya pattern laga ho to Android ise voice se kholne nahi deta (suraksha ke liye)
+    @Suppress("DEPRECATION")
+    fun wakeAndUnlock(): String {
+        return try {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            val wl = pm.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                    PowerManager.ON_AFTER_RELEASE,
+                "jarvis:wake"
+            )
+            wl.acquire(5000L)
+            val i = Intent(context, UnlockActivity::class.java)
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(i)
+            ""
+        } catch (e: Exception) {
+            "स्क्रीन नहीं खुल पाई।"
+        }
     }
 }
