@@ -28,6 +28,7 @@ class PhoneCallHandler(
     private val context: Context,
     private val audioRecorder: AudioRecorderHelper,
     private val apiClient: JarvisApiClient,
+    private val localRecognizer: LocalRecognizer,
     private val speaker: LocalSpeaker,
     private val onCallStarted: () -> Unit,   // call chalu/ring: baaki sunna rok do
     private val onCallEnded: () -> Unit      // call khatam: dobara sunna shuru
@@ -42,6 +43,7 @@ class PhoneCallHandler(
     private var announceTask: Runnable? = null
     private var registered = false
     private var savedRinger: Int? = null
+    private var decisionStarted = false
     private var savedRingVol: Int? = null
 
     private val receiver = object : BroadcastReceiver() {
@@ -116,6 +118,7 @@ class PhoneCallHandler(
             ringing = true
             announced = false
             handledByUs = false
+            decisionStarted = false
             val logPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALL_LOG) ==
                 PackageManager.PERMISSION_GRANTED
             DebugLogger.log("CALL", "Phone aa raha hai. number=" + (number ?: "NAHI MILA") +
@@ -153,6 +156,7 @@ class PhoneCallHandler(
         inCall = false
         announced = false
         handledByUs = false
+        decisionStarted = false
         lastNumber = null
         lastName = null
         try { audioRecorder.stopRecording() } catch (_: Exception) {}
@@ -180,7 +184,9 @@ class PhoneCallHandler(
             else -> "सर, फ़ोन आ रहा है। उठाऊँ या काट दूँ?"
         }
         DebugLogger.log("CALL", say)
-        speaker.speak(say, loud = true) { listenForDecision(0) }
+        speaker.speak(say, loud = true) { startDecision() }
+        // Awaaz khatam hone ka signal na aaye to bhi 7 second baad sunna shuru kar do
+        handler.postDelayed({ startDecision() }, 7000)
     }
 
     private fun lookupName(number: String): String? {
@@ -194,6 +200,13 @@ class PhoneCallHandler(
         } catch (e: Exception) { null }
     }
 
+    private fun startDecision() {
+        if (!ringing || decisionStarted) return
+        decisionStarted = true
+        DebugLogger.log("CALL", "Ab bolo: उठाओ ya काट दो")
+        listenForDecision(0)
+    }
+
     private fun listenForDecision(attempt: Int) {
         if (!ringing || attempt > 3) return
         val f = File(context.cacheDir, "call_decision.wav")
@@ -202,8 +215,20 @@ class PhoneCallHandler(
                 if (f.length() < 2000) {
                     listenForDecision(attempt + 1)
                 } else {
-                    apiClient.transcribe(f) { text ->
-                        if (ringing) handleDecision(text ?: "", attempt)
+                    val viaServer = {
+                        apiClient.transcribe(f) { text ->
+                            if (ringing) handleDecision(text ?: "", attempt)
+                        }
+                    }
+                    if (localRecognizer.isReady()) {
+                        // Phone ke andar hi suno (turant, server ke bina)
+                        localRecognizer.recognize(f) { local ->
+                            if (ringing) {
+                                if (local.isBlank()) viaServer() else handleDecision(local, attempt)
+                            }
+                        }
+                    } else {
+                        viaServer()
                     }
                 }
             }
