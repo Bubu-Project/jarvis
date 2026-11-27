@@ -2,6 +2,8 @@ package com.example.jarvis
 
 import android.Manifest
 import android.app.Activity
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -75,6 +77,19 @@ class PermissionsActivity : Activity() {
         }
         addButton("6) Battery optimization band karo (background mein chalta rahe)") {
             startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        }
+
+        addButton("7) Device admin (फ़ोन लॉक करो bolne par screen lock ho)") {
+            val i = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+            i.putExtra(
+                DevicePolicyManager.EXTRA_DEVICE_ADMIN,
+                ComponentName(this@PermissionsActivity, JarvisAdminReceiver::class.java)
+            )
+            i.putExtra(
+                DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                "Jarvis sirf voice se screen lock karne ke liye"
+            )
+            startActivity(i)
         }
 
         setContentView(ScrollView(this).apply { addView(root) })
