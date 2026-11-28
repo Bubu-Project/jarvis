@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
@@ -44,6 +45,8 @@ class PhoneCallHandler(
     private var registered = false
     private var savedRinger: Int? = null
     private var decisionStarted = false
+    private var acceptedByUs = false
+    private var speakerTouched = false
     private var savedRingVol: Int? = null
 
     private val receiver = object : BroadcastReceiver() {
@@ -145,6 +148,8 @@ class PhoneCallHandler(
         try { audioRecorder.stopRecording() } catch (_: Exception) {}
         speaker.stop()
         onCallStarted()
+        // Jarvis ne call uthayi ho to speaker par daalo (jud jane ke baad, kai baar koshish)
+        if (acceptedByUs) handler.postDelayed({ enableSpeaker(0) }, 1200)
     }
 
     private fun onIdle() {
@@ -162,6 +167,11 @@ class PhoneCallHandler(
         try { audioRecorder.stopRecording() } catch (_: Exception) {}
         speaker.stop()
         restoreRinger()
+        if (speakerTouched) {
+            restoreSpeaker()
+            speakerTouched = false
+        }
+        acceptedByUs = false
         DebugLogger.log("CALL", "Call khatam")
         if (missed && !who.isNullOrBlank()) {
             handler.postDelayed({
@@ -253,15 +263,9 @@ class PhoneCallHandler(
         try {
             val tm = context.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                acceptedByUs = true
                 tm.acceptRingingCall()
                 DebugLogger.log("CALL", "Call utha li")
-                // Haath khali rahe isliye speaker on karne ki koshish (har phone par nahi chalta)
-                handler.postDelayed({
-                    try {
-                        val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-                        am.isSpeakerphoneOn = true
-                    } catch (_: Exception) {}
-                }, 2000)
             }
         } catch (e: Exception) {
             DebugLogger.log("CALL", "Call uthane ki permission nahi: ${e.message}")
@@ -284,5 +288,45 @@ class PhoneCallHandler(
             DebugLogger.log("CALL", "Call katne ki permission nahi: ${e.message}")
             speaker.speak("सर, कॉल काटने की अनुमति नहीं है।")
         }
+    }
+
+    // Naye Android (12+) mein setCommunicationDevice, purane mein isSpeakerphoneOn. Teen baar koshish
+    private fun enableSpeaker(attempt: Int) {
+        if (!inCall || attempt > 3) return
+        speakerTouched = true
+        try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val dev = am.availableCommunicationDevices
+                    .firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                if (dev != null) am.setCommunicationDevice(dev)
+            } else {
+                @Suppress("DEPRECATION")
+                am.isSpeakerphoneOn = true
+            }
+            val on = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                am.communicationDevice?.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+            } else {
+                @Suppress("DEPRECATION")
+                am.isSpeakerphoneOn
+            }
+            DebugLogger.log("CALL", "Speaker koshish $attempt: " + if (on) "ON" else "abhi nahi")
+            if (!on) handler.postDelayed({ enableSpeaker(attempt + 1) }, 1500)
+        } catch (e: Exception) {
+            DebugLogger.log("CALL", "Speaker nahi laga: ${e.message}")
+            handler.postDelayed({ enableSpeaker(attempt + 1) }, 1500)
+        }
+    }
+
+    private fun restoreSpeaker() {
+        try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                am.clearCommunicationDevice()
+            } else {
+                @Suppress("DEPRECATION")
+                am.isSpeakerphoneOn = false
+            }
+        } catch (_: Exception) {}
     }
 }
