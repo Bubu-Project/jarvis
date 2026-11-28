@@ -19,7 +19,8 @@ object CommandParser {
         Regex("^call\\s+(.+)").find(text)?.let { match ->
             val name = match.groupValues[1].trim()
             val result = executor.callContact(name)
-            speak(result)
+            // ERROR FIX: Boolean ko String mein badla
+            speak(if (result) "Calling $name" else "Failed to call $name")
             return true
         }
 
@@ -34,7 +35,8 @@ object CommandParser {
             val name = match.groupValues[2].trim()
             val body = match.groupValues[4].trim()
             val result = executor.sendSms(name, body)
-            speak(result)
+            // ERROR FIX: Boolean ko String mein badla
+            speak(if (result) "Message sent to $name" else "Failed to send message to $name")
             return true
         }
 
