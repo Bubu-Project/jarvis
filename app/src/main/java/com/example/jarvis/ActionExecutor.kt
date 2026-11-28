@@ -154,7 +154,7 @@ class ActionExecutor(private val context: Context) {
     }
 
     // Bolne layak nateeja lautata hai (kamyabi ya wajah)
-    fun callContact(query: String): String {
+    fun callContactSpeak(query: String): String {
         if (!hasPerm(Manifest.permission.READ_CONTACTS)) return "कॉन्टैक्ट पढ़ने की अनुमति नहीं है।"
         if (!hasPerm(Manifest.permission.CALL_PHONE)) return "कॉल करने की अनुमति नहीं है।"
         val c = findContact(query) ?: return "$query नाम का कॉन्टैक्ट नहीं मिला।"
@@ -168,7 +168,7 @@ class ActionExecutor(private val context: Context) {
         }
     }
 
-    fun sendSms(query: String, message: String): String {
+    fun sendSmsSpeak(query: String, message: String): String {
         if (!hasPerm(Manifest.permission.READ_CONTACTS)) return "कॉन्टैक्ट पढ़ने की अनुमति नहीं है।"
         if (!hasPerm(Manifest.permission.SEND_SMS)) return "मैसेज भेजने की अनुमति नहीं है। Jarvis Permissions खोलकर SMS की अनुमति दीजिए।"
         val c = findContact(query) ?: return "$query नाम का कॉन्टैक्ट नहीं मिला।"
@@ -191,6 +191,11 @@ class ActionExecutor(private val context: Context) {
             "मैसेज नहीं भेज पाया।"
         }
     }
+
+    // Purane code (CommandParser.kt) ke liye: seedha true/false
+    fun callContact(name: String): Boolean = callContactSpeak(name).contains("कॉल लगा रहा")
+
+    fun sendSms(name: String, message: String): Boolean = sendSmsSpeak(name, message).contains("भेज दिया")
 
     // ---------------- YouTube / Apps ----------------
     fun playOnYoutube(query: String) {
